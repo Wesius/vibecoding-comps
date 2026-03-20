@@ -1,0 +1,23 @@
+[project]
+name = "vibecoding-comps"
+version = "0.1.0"
+description = "Order execution competition platform"
+readme = "README.md"
+requires-python = ">=3.13"
+dependencies = [
+    "numpy>=2.0",
+    "fastapi>=0.115",
+    "uvicorn[standard]>=0.30",
+    "python-multipart>=0.0.9",
+    "docker>=7.0",
+    "pyyaml>=6.0",
+    "requests>=2.31",
+]
+
+[tool.pytest.ini_options]
+pythonpath = ["."]
+
+[dependency-groups]
+dev = [
+    "pytest>=9.0.2",
+]
