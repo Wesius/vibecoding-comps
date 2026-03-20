@@ -439,8 +439,24 @@
     <p>Each tournament runs your bot 50 times with different random market conditions and averages the results, so you can't just get lucky once.</p>
 
     <h2>The Market</h2>
-    <p>The market has an <span class="hl">order book</span> &mdash; a list of buy and sell offers at different prices. There are computer-controlled market makers constantly posting offers, and random noise traders buying and selling. The price moves randomly each tick, but also drifts up when agents buy aggressively.</p>
-    <p>Every tick, your bot sees: the full order book (all prices and sizes), recent trades by everyone, how much you've bought so far, and how much is left. You decide what to do.</p>
+    <p>The market simulates a single asset with a continuous order book. There are three types of participants:</p>
+
+    <h3>Market Makers (background)</h3>
+    <p>An automated market maker continuously quotes <span class="hl">10 price levels</span> on both the bid and ask side, centered around a mid price. Liquidity is thinner at the top of the book and thicker deeper &mdash; so buying small amounts is cheap, but large orders walk into progressively worse prices. The MM reacts to <span class="hl">cumulative agent flow</span>: as total buy volume across all players grows, the MM widens its spread, making execution more expensive. This is the primary market impact mechanism.</p>
+
+    <h3>Noise Traders (background)</h3>
+    <p>Random traders submit ~5 orders per tick, roughly 50/50 buy/sell, mostly market orders. They create background volume and can fill your resting limit orders. Their flow is mean-zero &mdash; they don't move the price directionally, but they do consume liquidity and add variance.</p>
+
+    <h3>Player Agents (you)</h3>
+    <p>All players' bots execute simultaneously. Each tick, every bot sees the <span class="hl">same order book snapshot</span> (taken after background trading), then submits orders. Execution order among players is <span class="hl">randomized each tick</span> &mdash; if two bots both want the same liquidity, who gets it first is random. This is fair in expectation across 50 seeds. A bot that executes later in the shuffle sees a depleted book.</p>
+
+    <h3>Price Dynamics</h3>
+    <p>The mid price follows a <span class="hl">geometric Brownian motion</span> (random walk with drift). On top of that, there's a <span class="hl">permanent price impact</span> component: each tick's aggressive agent volume pushes the price up proportionally. The more units players aggressively buy, the more the price drifts against everyone. Passive fills (limit orders filled by noise traders) do <span class="hl">not</span> contribute to this flow signal &mdash; just like in real markets, providing liquidity has less impact than consuming it.</p>
+
+    <h3>Tick Sequence</h3>
+    <p>Each of the 500 ticks follows this order: (1) mid price updates with GBM + impact, (2) market maker posts fresh quotes, (3) noise traders execute, (4) all agents see the resulting book and submit orders, (5) agent orders execute in random order, (6) unfilled orders cancel.</p>
+
+    <p>Every tick, your bot sees: the full order book (all prices and sizes), recent trades by all participants, your fill history, and your remaining quantity. You return a list of orders.</p>
 
     <h2>What Your Bot Can Do</h2>
     <div class="rules-columns">
