@@ -1,4 +1,7 @@
+from pathlib import Path
+
 from fastapi import FastAPI
+from fastapi.responses import FileResponse
 
 from server.config import load_config
 from server.auth import create_auth_dependency
@@ -14,3 +17,10 @@ app = FastAPI(title="Order Execution Competition", version="0.1.0")
 app.include_router(create_submit_router(config, auth))
 app.include_router(create_run_router(config, auth))
 app.include_router(create_leaderboard_router(config))
+
+_STATIC_DIR = Path(__file__).parent / "static"
+
+
+@app.get("/")
+async def index():
+    return FileResponse(_STATIC_DIR / "index.html")

@@ -1,0 +1,356 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>The Execution Game</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@300;400;500;700&family=Space+Mono:wght@400;700&display=swap" rel="stylesheet">
+<style>
+  :root {
+    --bg: #0a0a0a;
+    --surface: #111111;
+    --border: #1e1e1e;
+    --amber: #FFB000;
+    --amber-dim: #805800;
+    --green: #00E676;
+    --red: #FF5252;
+    --text: #d4d4d4;
+    --text-dim: #5a5a5a;
+    --text-bright: #ffffff;
+  }
+
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+
+  body {
+    background: var(--bg);
+    color: var(--text);
+    font-family: 'JetBrains Mono', monospace;
+    min-height: 100vh;
+    overflow-x: hidden;
+  }
+
+  /* scanline overlay */
+  body::after {
+    content: '';
+    position: fixed;
+    inset: 0;
+    background: repeating-linear-gradient(
+      0deg,
+      transparent,
+      transparent 2px,
+      rgba(0,0,0,0.03) 2px,
+      rgba(0,0,0,0.03) 4px
+    );
+    pointer-events: none;
+    z-index: 100;
+  }
+
+  .container {
+    max-width: 900px;
+    margin: 0 auto;
+    padding: 2rem 1.5rem;
+  }
+
+  /* header */
+  .header {
+    border-bottom: 1px solid var(--border);
+    padding-bottom: 1.5rem;
+    margin-bottom: 2rem;
+  }
+
+  .tag {
+    font-size: 0.65rem;
+    letter-spacing: 0.15em;
+    text-transform: uppercase;
+    color: var(--amber);
+    margin-bottom: 0.5rem;
+    font-weight: 400;
+  }
+
+  h1 {
+    font-family: 'Space Mono', monospace;
+    font-size: 1.8rem;
+    font-weight: 700;
+    color: var(--text-bright);
+    letter-spacing: -0.02em;
+    line-height: 1.1;
+  }
+
+  .subtitle {
+    font-size: 0.7rem;
+    color: var(--text-dim);
+    margin-top: 0.6rem;
+    letter-spacing: 0.04em;
+  }
+
+  .subtitle span {
+    color: var(--green);
+  }
+
+  /* status bar */
+  .status-bar {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    font-size: 0.65rem;
+    color: var(--text-dim);
+    margin-bottom: 1rem;
+    letter-spacing: 0.03em;
+  }
+
+  .live-dot {
+    display: inline-block;
+    width: 6px;
+    height: 6px;
+    background: var(--green);
+    border-radius: 50%;
+    margin-right: 6px;
+    animation: pulse 2s ease-in-out infinite;
+  }
+
+  @keyframes pulse {
+    0%, 100% { opacity: 1; }
+    50% { opacity: 0.3; }
+  }
+
+  /* table */
+  .table-wrap {
+    border: 1px solid var(--border);
+    background: var(--surface);
+    overflow: hidden;
+  }
+
+  table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 0.8rem;
+  }
+
+  thead th {
+    text-align: left;
+    padding: 0.75rem 1rem;
+    font-size: 0.6rem;
+    font-weight: 500;
+    letter-spacing: 0.12em;
+    text-transform: uppercase;
+    color: var(--text-dim);
+    border-bottom: 1px solid var(--border);
+    background: var(--bg);
+    position: sticky;
+    top: 0;
+  }
+
+  thead th:not(:first-child) {
+    text-align: right;
+  }
+
+  tbody tr {
+    border-bottom: 1px solid var(--border);
+    transition: background 0.15s;
+  }
+
+  tbody tr:last-child {
+    border-bottom: none;
+  }
+
+  tbody tr:hover {
+    background: rgba(255, 176, 0, 0.03);
+  }
+
+  td {
+    padding: 0.7rem 1rem;
+    font-weight: 400;
+  }
+
+  td:not(:first-child) {
+    text-align: right;
+    font-variant-numeric: tabular-nums;
+  }
+
+  .rank {
+    color: var(--text-dim);
+    width: 3rem;
+  }
+
+  .rank-1 .rank { color: var(--amber); font-weight: 700; }
+  .rank-1 .name { color: var(--amber); }
+  .rank-2 .rank { color: var(--text); }
+  .rank-3 .rank { color: var(--text); }
+
+  .name {
+    color: var(--text-bright);
+    font-weight: 500;
+    letter-spacing: 0.02em;
+  }
+
+  .is-val {
+    color: var(--green);
+    font-weight: 500;
+  }
+
+  .best-val {
+    color: var(--text);
+  }
+
+  .tournaments-val {
+    color: var(--text-dim);
+  }
+
+  /* empty state */
+  .empty {
+    padding: 4rem 2rem;
+    text-align: center;
+  }
+
+  .empty-icon {
+    font-size: 1.5rem;
+    color: var(--text-dim);
+    margin-bottom: 1rem;
+    opacity: 0.3;
+  }
+
+  .empty-text {
+    font-size: 0.75rem;
+    color: var(--text-dim);
+    letter-spacing: 0.04em;
+  }
+
+  .empty-sub {
+    font-size: 0.65rem;
+    color: var(--text-dim);
+    opacity: 0.5;
+    margin-top: 0.4rem;
+  }
+
+  /* footer */
+  .footer {
+    margin-top: 1.5rem;
+    padding-top: 1rem;
+    border-top: 1px solid var(--border);
+    font-size: 0.6rem;
+    color: var(--text-dim);
+    display: flex;
+    justify-content: space-between;
+    letter-spacing: 0.03em;
+    opacity: 0.6;
+  }
+
+  /* loading flash */
+  .flash {
+    animation: flashIn 0.3s ease-out;
+  }
+
+  @keyframes flashIn {
+    0% { opacity: 0.5; }
+    100% { opacity: 1; }
+  }
+
+  /* responsive */
+  @media (max-width: 600px) {
+    .container { padding: 1.2rem 1rem; }
+    h1 { font-size: 1.3rem; }
+    table { font-size: 0.7rem; }
+    thead th, td { padding: 0.6rem 0.6rem; }
+    .status-bar { flex-direction: column; align-items: flex-start; gap: 0.3rem; }
+  }
+</style>
+</head>
+<body>
+
+<div class="container">
+  <div class="header">
+    <div class="tag">Live Leaderboard</div>
+    <h1>The Execution Game</h1>
+    <div class="subtitle">Implementation shortfall &mdash; <span>lower is better</span></div>
+  </div>
+
+  <div class="status-bar">
+    <div><span class="live-dot"></span>Auto-refresh 30s</div>
+    <div id="updated"></div>
+  </div>
+
+  <div class="table-wrap" id="board">
+    <div class="empty">
+      <div class="empty-icon">&#9608;&#9608;&#9608;</div>
+      <div class="empty-text">Loading...</div>
+    </div>
+  </div>
+
+  <div class="footer">
+    <div>vibecoding-comps</div>
+    <div id="player-count"></div>
+  </div>
+</div>
+
+<script>
+async function fetchLeaderboard() {
+  try {
+    const res = await fetch('/leaderboard');
+    const data = await res.json();
+    render(data);
+  } catch (e) {
+    console.error('Fetch failed:', e);
+  }
+}
+
+function render(data) {
+  const board = document.getElementById('board');
+  const updated = document.getElementById('updated');
+  const count = document.getElementById('player-count');
+
+  if (data.updated_at) {
+    const d = new Date(data.updated_at);
+    updated.textContent = 'Last: ' + d.toLocaleString();
+  } else {
+    updated.textContent = '';
+  }
+
+  const standings = data.standings || [];
+  count.textContent = standings.length + ' player' + (standings.length !== 1 ? 's' : '');
+
+  if (standings.length === 0) {
+    board.innerHTML = `
+      <div class="empty">
+        <div class="empty-icon">&#x2015;&#x2015;&#x2015;</div>
+        <div class="empty-text">No tournaments yet</div>
+        <div class="empty-sub">Submit an agent and run a tournament to see results</div>
+      </div>`;
+    return;
+  }
+
+  let html = `<table>
+    <thead><tr>
+      <th>#</th>
+      <th>Player</th>
+      <th>Mean IS (bps)</th>
+      <th>Best IS</th>
+      <th>Runs</th>
+    </tr></thead><tbody>`;
+
+  for (const s of standings) {
+    const cls = s.rank <= 3 ? `rank-${s.rank}` : '';
+    const mean = s.mean_is === Infinity ? '—' : s.mean_is.toFixed(2);
+    const best = s.best_is === Infinity ? '—' : s.best_is.toFixed(2);
+    html += `<tr class="${cls}">
+      <td class="rank">${s.rank}</td>
+      <td class="name">${s.name}</td>
+      <td class="is-val">${mean}</td>
+      <td class="best-val">${best}</td>
+      <td class="tournaments-val">${s.tournaments_played}</td>
+    </tr>`;
+  }
+
+  html += '</tbody></table>';
+  board.innerHTML = html;
+  board.classList.remove('flash');
+  void board.offsetWidth;
+  board.classList.add('flash');
+}
+
+fetchLeaderboard();
+setInterval(fetchLeaderboard, 30000);
+</script>
+
+</body>
+</html>
