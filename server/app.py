@@ -20,12 +20,14 @@ logger = logging.getLogger("comp-server")
 config = load_config()
 auth = create_auth_dependency(config)
 
-TOURNAMENT_INTERVAL = 60  # seconds
+TOURNAMENT_INTERVAL = 0  # 0 = disabled
 
 
 async def _auto_tournament_loop():
     """Run a tournament every TOURNAMENT_INTERVAL seconds."""
     while True:
+        if TOURNAMENT_INTERVAL <= 0:
+            return
         await asyncio.sleep(TOURNAMENT_INTERVAL)
         # Check if any agents are submitted
         agent_dirs = [
