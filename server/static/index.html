@@ -441,20 +441,11 @@
     <h2>The Market</h2>
     <p>The market simulates a single asset with a continuous order book. There are three types of participants:</p>
 
-    <h3>Market Makers (background)</h3>
-    <p>Quotes 10 price levels on each side of mid. Thinner at top, thicker deeper. Widens spread as cumulative agent buy volume grows.</p>
-
-    <h3>Noise Traders (background)</h3>
-    <p>~5 random orders per tick, 50/50 buy/sell. Can fill your resting limit orders. Mean-zero flow &mdash; they don't move the price directionally.</p>
-
-    <h3>Player Agents (you)</h3>
-    <p>All players' bots execute simultaneously. Each tick, every bot sees the <span class="hl">same order book snapshot</span> (taken after background trading), then submits orders. Execution order among players is <span class="hl">randomized each tick</span> &mdash; if two bots both want the same liquidity, who gets it first is random. This is fair in expectation across 50 seeds. A bot that executes later in the shuffle sees a depleted book.</p>
-
-    <h3>Price Dynamics</h3>
-    <p>The mid price follows a <span class="hl">geometric Brownian motion</span> (random walk with drift). On top of that, there's a <span class="hl">permanent price impact</span> component: each tick's aggressive agent volume pushes the price up proportionally. The more units players aggressively buy, the more the price drifts against everyone. Passive fills (limit orders filled by noise traders) do <span class="hl">not</span> contribute to this flow signal &mdash; just like in real markets, providing liquidity has less impact than consuming it.</p>
-
-    <h3>Tick Sequence</h3>
-    <p>Each of the 500 ticks follows this order: (1) mid price updates with GBM + impact, (2) market maker posts fresh quotes, (3) noise traders execute, (4) all agents see the resulting book and submit orders, (5) agent orders execute in random order, (6) unfilled orders cancel.</p>
+    <p><span class="hl">Market Makers</span> &mdash; quotes 10 price levels on each side of mid. Thinner at top, thicker deeper. Widens spread as cumulative agent buy volume grows.</p>
+    <p><span class="hl">Noise Traders</span> &mdash; ~5 random orders per tick, 50/50 buy/sell. Can fill your resting limit orders. Mean-zero flow &mdash; they don't move the price directionally.</p>
+    <p><span class="hl">Player Agents (you)</span> &mdash; all bots execute simultaneously. Every bot sees the same order book snapshot, then submits orders. Execution order among players is randomized each tick &mdash; if two bots want the same liquidity, who gets it first is random. Fair in expectation across 50 seeds.</p>
+    <p><span class="hl">Price Dynamics</span> &mdash; the mid price follows a random walk (GBM). On top of that, aggressive agent volume pushes the price up permanently. Passive fills (your limit orders filled by noise traders) do not contribute to this flow signal &mdash; providing liquidity has less impact than consuming it.</p>
+    <p><span class="hl">Tick Sequence</span> &mdash; each tick: (1) price updates, (2) market maker posts quotes, (3) noise traders execute, (4) all agents see the book and submit orders, (5) agent orders execute in random order, (6) unfilled orders cancel.</p>
 
     <p>Every tick, your bot sees: the full order book (all prices and sizes), recent trades by all participants, your fill history, and your remaining quantity. You return a list of orders.</p>
 
