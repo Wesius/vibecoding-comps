@@ -88,6 +88,9 @@ def run_tournament(config: ServerConfig) -> dict:
     agent_seed_count: dict[str, int] = {
         kwargs["agent_id"]: 0 for _, kwargs in agent_factories
     }
+    mid_price_sum = np.zeros(n_ticks)
+    spread_sum = np.zeros(n_ticks)
+    market_seed_count = 0
 
     for seed_seq in sim_seeds:
         # Fresh instances per seed
@@ -106,7 +109,11 @@ def run_tournament(config: ServerConfig) -> dict:
             continue
 
         sim = Simulation(agents=agents, config=sim_config, seed=seed_seq)
-        results = sim.run()
+        results, tick_mids, tick_spreads = sim.run()
+
+        mid_price_sum += np.array(tick_mids)
+        spread_sum += np.array(tick_spreads)
+        market_seed_count += 1
 
         for result in results:
             agent_scores[result.agent_id].append(result.implementation_shortfall)
@@ -153,11 +160,24 @@ def run_tournament(config: ServerConfig) -> dict:
             "error": error,
         })
 
+    # Downsample market data
+    step = max(1, n_ticks // 50)
+    if market_seed_count > 0:
+        avg_mid = mid_price_sum / market_seed_count
+        avg_spread = spread_sum / market_seed_count
+        mid_curve = [round(float(avg_mid[i]), 4) for i in range(0, n_ticks, step)]
+        spread_curve = [round(float(avg_spread[i]), 4) for i in range(0, n_ticks, step)]
+    else:
+        mid_curve = []
+        spread_curve = []
+
     tournament_id = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H-%M-%S")
 
     return {
         "tournament_id": tournament_id,
         "results": rankings,
+        "mid_curve": mid_curve,
+        "spread_curve": spread_curve,
     }
 
 
@@ -184,6 +204,8 @@ def update_leaderboard(config: ServerConfig, tournament_result: dict) -> None:
         "updated_at": datetime.now(timezone.utc).isoformat(),
         "tournament_id": tournament_result["tournament_id"],
         "standings": standings,
+        "mid_curve": tournament_result.get("mid_curve", []),
+        "spread_curve": tournament_result.get("spread_curve", []),
     }
 
     # Atomic write

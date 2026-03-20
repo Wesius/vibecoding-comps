@@ -142,6 +142,8 @@ class Simulation:
         tick_avg_price: dict[str, list[float]] = {
             a.agent_id: [] for a in self._agents
         }
+        tick_mid_prices: list[float] = []
+        tick_spreads: list[float] = []
         tape: list[TradeTapeEntry] = []
         prev_tick_agent_flow = 0
 
@@ -184,6 +186,11 @@ class Simulation:
 
             # [D] SNAPSHOT FOR AGENTS
             snapshot = book.snapshot()
+            tick_mid_prices.append(snapshot.mid_price)
+            if snapshot.asks and snapshot.bids:
+                tick_spreads.append(snapshot.asks[0].price - snapshot.bids[0].price)
+            else:
+                tick_spreads.append(0.0)
 
             # Trim tape to rolling window for agents
             tape_window_entries = [
@@ -316,4 +323,4 @@ class Simulation:
                 running_avg_price=tick_avg_price[agent.agent_id],
             ))
 
-        return results
+        return results, tick_mid_prices, tick_spreads

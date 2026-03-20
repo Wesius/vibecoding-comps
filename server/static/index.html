@@ -416,6 +416,16 @@
       <canvas id="priceChart"></canvas>
       <div class="chart-legend" id="priceLegend"></div>
     </div>
+    <div class="chart-box">
+      <h3>Market Mid Price</h3>
+      <canvas id="midChart"></canvas>
+      <div class="chart-legend" id="midLegend"></div>
+    </div>
+    <div class="chart-box">
+      <h3>Bid-Ask Spread</h3>
+      <canvas id="spreadChart"></canvas>
+      <div class="chart-legend" id="spreadLegend"></div>
+    </div>
   </div>
 
   <div class="rules">
@@ -514,7 +524,7 @@ function render(data) {
   void board.offsetWidth;
   board.classList.add('flash');
 
-  renderCharts(standings);
+  renderCharts(standings, data);
 }
 
 const COLORS = ['#FFB000', '#00E676', '#448AFF', '#FF5252', '#E040FB', '#00BCD4', '#FF9100', '#76FF03'];
@@ -596,7 +606,61 @@ function drawChart(canvasId, legendId, standings, getValues, yLabel, formatY) {
   });
 }
 
-function renderCharts(standings) {
+function drawSingleLine(canvasId, legendId, values, label, color, formatY) {
+  // Wrap as a single-entry standings array and reuse drawChart
+  const fake = [{ name: label, [label]: values }];
+  const canvas = document.getElementById(canvasId);
+  const legend = document.getElementById(legendId);
+  const ctx = canvas.getContext('2d');
+  const dpr = window.devicePixelRatio || 1;
+  const rect = canvas.getBoundingClientRect();
+  canvas.width = rect.width * dpr;
+  canvas.height = rect.height * dpr;
+  ctx.scale(dpr, dpr);
+  const W = rect.width;
+  const H = rect.height;
+  const pad = { top: 10, right: 10, bottom: 20, left: 45 };
+
+  if (!values || !values.length) return;
+  const yMin = Math.min(...values);
+  const yMax = Math.max(...values);
+  const yRange = yMax - yMin || 1;
+  const plotW = W - pad.left - pad.right;
+  const plotH = H - pad.top - pad.bottom;
+
+  ctx.strokeStyle = '#1e1e1e';
+  ctx.lineWidth = 1;
+  for (let i = 0; i <= 4; i++) {
+    const y = pad.top + (plotH / 4) * i;
+    ctx.beginPath(); ctx.moveTo(pad.left, y); ctx.lineTo(W - pad.right, y); ctx.stroke();
+  }
+  ctx.fillStyle = '#5a5a5a';
+  ctx.font = '10px JetBrains Mono';
+  ctx.textAlign = 'right';
+  for (let i = 0; i <= 4; i++) {
+    const val = yMax - (yRange / 4) * i;
+    ctx.fillText(formatY(val), pad.left - 5, pad.top + (plotH / 4) * i + 3);
+  }
+  ctx.textAlign = 'center';
+  ctx.fillText('0', pad.left, H - 3);
+  ctx.fillText('500', W - pad.right, H - 3);
+
+  ctx.strokeStyle = color;
+  ctx.lineWidth = 1.5;
+  ctx.beginPath();
+  for (let i = 0; i < values.length; i++) {
+    const x = pad.left + (i / (values.length - 1)) * plotW;
+    const y = pad.top + (1 - (values[i] - yMin) / yRange) * plotH;
+    if (i === 0) ctx.moveTo(x, y); else ctx.lineTo(x, y);
+  }
+  ctx.stroke();
+  legend.innerHTML = `<div class="legend-item"><div class="legend-dot" style="background:${color}"></div>${label}</div>`;
+}
+
+var _lastData = null;
+
+function renderCharts(standings, data) {
+  _lastData = data;
   const chartsEl = document.getElementById('charts');
   const hasData = standings.some(s => s.fill_curve && s.fill_curve.length > 0);
   if (!hasData) {
@@ -616,6 +680,16 @@ function renderCharts(standings) {
     'Price',
     v => '$' + v.toFixed(2)
   );
+
+  if (data.mid_curve && data.mid_curve.length) {
+    drawSingleLine('midChart', 'midLegend', data.mid_curve, 'Mid Price', '#448AFF',
+      v => '$' + v.toFixed(2));
+  }
+
+  if (data.spread_curve && data.spread_curve.length) {
+    drawSingleLine('spreadChart', 'spreadLegend', data.spread_curve, 'Spread', '#FF5252',
+      v => '$' + v.toFixed(4));
+  }
 }
 
 fetchLeaderboard();
