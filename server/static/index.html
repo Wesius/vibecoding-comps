@@ -429,31 +429,50 @@
   </div>
 
   <div class="rules">
-    <h2>How It Works</h2>
-    <p>You have <span class="hl">10,000 units</span> to buy over <span class="hl">500 ticks</span>. A synthetic market provides liquidity through an order book. Every time you buy, you push the price up. Other players' agents are buying simultaneously, competing for the same liquidity.</p>
-    <p>Your score is how much extra you paid vs the starting price, in basis points (1 bps = 0.01%). <span class="green">Lower is better.</span> Negative means you beat the starting price.</p>
-    <p>Example: the starting price is $100. A score of <span class="hl">50 bps</span> means your average fill was <span class="hl">$100.50</span> &mdash; on 10,000 units that's $5,000 in extra cost. A score of <span class="green">-10 bps</span> means you averaged <span class="green">$99.90</span>, beating the market.</p>
-    <p><span class="hl">Mean</span> = your average score across all tournaments. <span class="hl">Best</span> = your best single tournament. Each tournament runs 50 random seeds and averages.</p>
+    <h2>What Is This?</h2>
+    <p>You write a Python bot that buys stuff on a simulated stock market. Your bot needs to buy <span class="hl">10,000 units</span> over <span class="hl">500 time steps</span>. The catch: every time you buy, you push the price up. And everyone else's bots are buying at the same time, fighting over the same limited supply.</p>
+    <p>The dumb approach &mdash; buying everything at once &mdash; gets crushed because you eat through all the cheap offers and end up paying way more. The game is figuring out <span class="hl">when</span> to buy, <span class="hl">how much</span> to buy, and <span class="hl">what price</span> to offer.</p>
 
+    <h2>How Scoring Works</h2>
+    <p>The starting price is <span class="hl">$100</span>. Your score is how much more (or less) you paid on average compared to that starting price.</p>
+    <p>A score of <span class="hl">50 bps</span> means your average buy price was <span class="hl">$100.50</span> &mdash; you overpaid by $0.50 per unit, or $5,000 total. A score of <span class="green">-10 bps</span> means you averaged <span class="green">$99.90</span> &mdash; you actually beat the starting price. <span class="green">Lower is better. Negative is amazing.</span></p>
+    <p>Each tournament runs your bot 50 times with different random market conditions and averages the results, so you can't just get lucky once.</p>
+
+    <h2>The Market</h2>
+    <p>The market has an <span class="hl">order book</span> &mdash; a list of buy and sell offers at different prices. There are computer-controlled market makers constantly posting offers, and random noise traders buying and selling. The price moves randomly each tick, but also drifts up when agents buy aggressively.</p>
+    <p>Every tick, your bot sees: the full order book (all prices and sizes), recent trades by everyone, how much you've bought so far, and how much is left. You decide what to do.</p>
+
+    <h2>What Your Bot Can Do</h2>
     <div class="rules-columns">
       <div>
-        <h3>Getting Started</h3>
-        <ol>
-          <li>Clone: <code>git clone https://github.com/Wesius/vibecoding-comps.git</code></li>
-          <li>Install: <code>uv sync</code></li>
-          <li>Drop your <code>.txt</code> credentials file in the repo root, rename to <code>.env</code></li>
-          <li>Edit <code>agent/agent.py</code></li>
-          <li>Test: <code>uv run python cli.py test</code></li>
-          <li>Submit: <code>uv run python cli.py submit</code></li>
-        </ol>
+        <h3>Market Orders</h3>
+        <p>Buy immediately at whatever price is available. Guaranteed to fill, but you pay the current asking price. If you buy a lot at once, you "walk the book" &mdash; eating through cheap offers and paying more for each additional unit.</p>
       </div>
       <div>
-        <h3>Order Types</h3>
-        <p><span class="hl">Market orders</span> fill immediately but you pay the spread and walk the book if it's thin.</p>
-        <p><span class="hl">Limit orders</span> are cheaper if they fill, but unfilled orders are cancelled at end of tick.</p>
-        <p>Your agent sees the full order book, trade tape, and your own fill history every tick.</p>
+        <h3>Limit Orders</h3>
+        <p>Place an offer to buy at a specific price. Only fills if someone sells to you at that price. Cheaper when it works, but might not fill at all. Unfilled limit orders are cancelled at the end of each tick.</p>
       </div>
     </div>
+
+    <h2>Strategy Ideas</h2>
+    <p><span class="hl">Spread it out</span> &mdash; buy a little bit each tick instead of all at once. This is called TWAP (Time-Weighted Average Price) and it's the simplest strategy that actually works.</p>
+    <p><span class="hl">Use limit orders</span> &mdash; instead of paying the asking price, post a buy order slightly below it. You get a better price when it fills, and you don't push the market up as much.</p>
+    <p><span class="hl">Read the book</span> &mdash; if there's a lot of supply available at the current price, it's a good time to buy. If the book is thin, wait.</p>
+    <p><span class="hl">Watch the spread</span> &mdash; the gap between the best buy and sell prices widens when the market detects aggressive buying. When the spread is wide, back off. When it tightens, buy.</p>
+    <p><span class="hl">Watch the tape</span> &mdash; you can see all recent trades. If another bot just slammed the market, prices are temporarily elevated. Wait for things to settle.</p>
+    <p><span class="hl">Go full quant</span> &mdash; train a reinforcement learning model offline, load the weights in your bot, and run inference each tick. The sky is the limit.</p>
+
+    <h2>Getting Started</h2>
+    <ol>
+      <li>Clone the repo: <code>git clone https://github.com/Wesius/vibecoding-comps.git</code></li>
+      <li>Install dependencies: <code>uv sync</code> &nbsp;(don't have uv? <code>curl -LsSf https://astral.sh/uv/install.sh | sh</code>)</li>
+      <li>Drop your credentials <code>.txt</code> file in the repo root and rename it to <code>.env</code></li>
+      <li>Edit <code>agent/agent.py</code> &mdash; this is your bot. It comes pre-filled with a basic strategy.</li>
+      <li>Test locally: <code>uv run python cli.py test</code> &mdash; runs your bot against example bots on your machine</li>
+      <li>Submit: <code>uv run python cli.py submit</code> &mdash; uploads your bot and runs a tournament immediately</li>
+    </ol>
+    <p>You can submit as many times as you want. Each submit overwrites your previous bot and runs a fresh tournament. Tournaments also auto-run every 60 seconds. Iterate fast.</p>
+    <p>Look at the example bots in the <code>agents/</code> folder for inspiration &mdash; <code>naive.py</code>, <code>twap.py</code>, <code>vwap.py</code>, and <code>adaptive.py</code>.</p>
   </div>
 
   <div class="footer">
