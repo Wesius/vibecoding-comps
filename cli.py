@@ -147,11 +147,35 @@ def cmd_submit(args: argparse.Namespace) -> None:
         files={"agent_zip": ("agent.zip", buf, "application/zip")},
     )
 
-    if resp.status_code == 200:
-        print(f"Submitted! Tournaments auto-run every 15s. Check: uv run python cli.py leaderboard")
-    else:
+    if resp.status_code != 200:
         print(f"Error ({resp.status_code}): {resp.json().get('detail', resp.text)}")
         sys.exit(1)
+
+    print("Submitted! Running tournament...\n")
+
+    resp = requests.post(
+        f"{server}/run",
+        headers={"X-Player-Name": name, "X-Player-Token": token},
+        timeout=600,
+    )
+
+    if resp.status_code != 200:
+        print(f"Tournament error ({resp.status_code}): {resp.json().get('detail', resp.text)}")
+        sys.exit(1)
+
+    data = resp.json()
+    results = data.get("results", [])
+
+    print(f"{'Rank':<6}{'Agent':<15}{'Mean IS (bps)':<16}{'Seeds OK':<10}")
+    print("-" * 47)
+
+    for entry in results:
+        marker = " <--" if entry["name"] == name else ""
+        print(
+            f"{entry['rank']:<6}{entry['name']:<15}"
+            f"{entry['mean_is']:<16.2f}{entry['seeds_completed']:<10}{marker}"
+        )
+    print()
 
 
 def cmd_leaderboard(args: argparse.Namespace) -> None:

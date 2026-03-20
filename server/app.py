@@ -18,7 +18,7 @@ logger = logging.getLogger("comp-server")
 config = load_config()
 auth = create_auth_dependency(config)
 
-TOURNAMENT_INTERVAL = 15  # seconds
+TOURNAMENT_INTERVAL = 60  # seconds
 
 
 async def _auto_tournament_loop():
