@@ -48,11 +48,8 @@ def on_tick(self, state: TickState) -> list[Order]:
 # Test locally against example bots
 uv run python cli.py test
 
-# Submit your agent to the server
+# Submit your agent (tournaments auto-run every 15s)
 uv run python cli.py submit
-
-# Run a tournament (runs all submitted agents against each other)
-uv run python cli.py run
 
 # Check the leaderboard
 uv run python cli.py leaderboard

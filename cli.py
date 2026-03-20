@@ -148,46 +148,10 @@ def cmd_submit(args: argparse.Namespace) -> None:
     )
 
     if resp.status_code == 200:
-        print(f"Success: {resp.json().get('message', 'Agent uploaded.')}")
+        print(f"Submitted! Tournaments auto-run every 15s. Check: uv run python cli.py leaderboard")
     else:
         print(f"Error ({resp.status_code}): {resp.json().get('detail', resp.text)}")
         sys.exit(1)
-
-
-def cmd_run(args: argparse.Namespace) -> None:
-    """Trigger a tournament on the server."""
-    import requests
-
-    server, name, token = _get_credentials(args)
-
-    print(f"Triggering tournament on {server}...")
-    print("This may take a minute...\n")
-
-    resp = requests.post(
-        f"{server}/run",
-        headers={"X-Player-Name": name, "X-Player-Token": token},
-        timeout=600,
-    )
-
-    if resp.status_code != 200:
-        print(f"Error ({resp.status_code}): {resp.json().get('detail', resp.text)}")
-        sys.exit(1)
-
-    data = resp.json()
-    results = data.get("results", [])
-
-    print(f"Tournament: {data.get('tournament_id', 'unknown')}\n")
-    print(f"{'Rank':<6}{'Agent':<15}{'Mean IS (bps)':<16}{'Seeds OK':<10}")
-    print("-" * 47)
-
-    for entry in results:
-        marker = " <--" if entry["name"] == name else ""
-        print(
-            f"{entry['rank']:<6}{entry['name']:<15}"
-            f"{entry['mean_is']:<16.2f}{entry['seeds_completed']:<10}{marker}"
-        )
-
-    print()
 
 
 def cmd_leaderboard(args: argparse.Namespace) -> None:
@@ -241,9 +205,6 @@ def main() -> None:
     # submit
     subparsers.add_parser("submit", help="Submit your agent to the server")
 
-    # run
-    subparsers.add_parser("run", help="Trigger a tournament")
-
     # leaderboard
     subparsers.add_parser("leaderboard", help="Show current standings")
 
@@ -252,7 +213,6 @@ def main() -> None:
     commands = {
         "test": cmd_test,
         "submit": cmd_submit,
-        "run": cmd_run,
         "leaderboard": cmd_leaderboard,
     }
     commands[args.command](args)
