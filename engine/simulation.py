@@ -27,6 +27,18 @@ if TYPE_CHECKING:
     from agents.base import BaseAgent
 
 
+def _ensure_unique_agent_ids(agent_ids: Sequence[str]) -> None:
+    seen: set[str] = set()
+    duplicates: set[str] = set()
+    for agent_id in agent_ids:
+        if agent_id in seen:
+            duplicates.add(agent_id)
+        seen.add(agent_id)
+    if duplicates:
+        joined = ", ".join(sorted(duplicates))
+        raise ValueError(f"duplicate agent_id(s): {joined}")
+
+
 def _validate_agent_actions(
     actions: Sequence[Order | CancelOrder],
     remaining_qty: int,
@@ -51,6 +63,9 @@ def _validate_agent_actions(
                 and action.order_id not in cancel_ids
             ):
                 cancel_ids.append(action.order_id)
+            continue
+
+        if not isinstance(action, Order):
             continue
 
         order = action
@@ -86,6 +101,7 @@ class Simulation:
         collect_replay: bool = True,
     ) -> None:
         self._agents = list(agents)
+        _ensure_unique_agent_ids([agent.agent_id for agent in self._agents])
         self._config = config
         self._seed = seed
         self._collect_replay = collect_replay
@@ -171,7 +187,8 @@ class Simulation:
                 intensity_scale=0.5,
             )
 
-            # [C] REFRESH TRANSIENT LIQUIDITY AND EXECUTE NOISE
+            # [C] REFRESH MARKET MAKER QUOTES AND EXECUTE NOISE
+            book.cancel_all_orders("mm")
             for order in mm_orders:
                 assert order.price is not None
                 book.add_limit_order(
@@ -180,10 +197,14 @@ class Simulation:
                     order.size,
                     order.agent_id or "mm",
                     submitted_tick=tick,
+                    persistent=True,
                 )
 
             noise_tape, background_fills = matching.execute_background_orders(
-                book, noise_orders, tick
+                book,
+                noise_orders,
+                tick,
+                resting_order_ttl_ticks=cfg.noise_order_ttl_ticks,
             )
             tape.extend(noise_tape)
             for agent_id, fills in background_fills.items():
@@ -233,6 +254,11 @@ class Simulation:
                     actions = agent.on_tick(state)
                 except Exception:
                     actions = []
+                if (
+                    not isinstance(actions, Sequence)
+                    or isinstance(actions, (str, bytes))
+                ):
+                    actions = []
 
                 cancel_ids = [
                     action.order_id
@@ -280,7 +306,10 @@ class Simulation:
             )
             post_noise_tape, post_background_fills = (
                 matching.execute_background_orders(
-                book, post_noise_orders, tick
+                    book,
+                    post_noise_orders,
+                    tick,
+                    resting_order_ttl_ticks=cfg.noise_order_ttl_ticks,
                 )
             )
             tape.extend(post_noise_tape)
@@ -336,9 +365,6 @@ class Simulation:
                 tick_avg_price[aid].append(
                     _compute_avg_price(fills) if fills else arrival_price
                 )
-
-            # [G] CLEANUP
-            book.clear_transient()
 
         # Compute final results
         results: list[AgentResult] = []

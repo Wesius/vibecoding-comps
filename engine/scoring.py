@@ -15,6 +15,10 @@ def implementation_shortfall(
     Unfilled quantity is penalized at worst fill price + 10bps.
     Returns float('inf') if no fills at all.
     """
+    if arrival_price <= 0:
+        raise ValueError("arrival_price must be positive")
+    if target_qty <= 0:
+        raise ValueError("target_qty must be positive")
     if not fills:
         return float("inf")
 

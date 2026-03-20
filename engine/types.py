@@ -148,7 +148,25 @@ class SimulationConfig:
     noise_market_prob: float = 0.7
     noise_mean_size: int = 50
     noise_size_std: float = 0.5
-    # Agent passive order lifetime
-    agent_order_ttl_ticks: int = 5
+    # Optional passive order lifetime cap. None means rest until cancelled.
+    agent_order_ttl_ticks: int | None = None
+    # Noise trader passive orders rest for a bounded time to preserve
+    # queue continuity without letting stale orders accumulate forever.
+    noise_order_ttl_ticks: int = 20
     # Tape
     tape_window: int = 50
+
+    def __post_init__(self) -> None:
+        if self.n_ticks <= 0:
+            raise ValueError("n_ticks must be positive")
+        if self.target_qty <= 0:
+            raise ValueError("target_qty must be positive")
+        if self.initial_price <= 0:
+            raise ValueError("initial_price must be positive")
+        if (
+            self.agent_order_ttl_ticks is not None
+            and self.agent_order_ttl_ticks <= 0
+        ):
+            raise ValueError("agent_order_ttl_ticks must be positive or None")
+        if self.noise_order_ttl_ticks <= 0:
+            raise ValueError("noise_order_ttl_ticks must be positive")
