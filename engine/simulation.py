@@ -83,10 +83,12 @@ class Simulation:
         agents: Sequence[BaseAgent],
         config: SimulationConfig,
         seed: int | np.random.SeedSequence,
+        collect_replay: bool = True,
     ) -> None:
         self._agents = list(agents)
         self._config = config
         self._seed = seed
+        self._collect_replay = collect_replay
 
     def run(self) -> list[AgentResult]:
         """Execute the full simulation. Returns results for each agent."""
@@ -293,32 +295,37 @@ class Simulation:
             )
             cumulative_agent_flow += prev_tick_agent_flow
 
-            # Collect replay frame
-            replay_agents = {}
-            for agent in self._agents:
-                aid = agent.agent_id
-                af = agent_fills[aid]
-                n_orders = len(all_agent_orders.get(aid, []))
-                n_market = sum(1 for o in all_agent_orders.get(aid, []) if o.order_type == OrderType.MARKET)
-                tick_fill_qty = sum(f.size for f in tick_fills.get(aid, []))
-                cum_qty = sum(f.size for f in af)
-                replay_agents[aid] = {
-                    "orders": n_orders,
-                    "market_orders": n_market,
-                    "limit_orders": n_orders - n_market,
-                    "filled_this_tick": tick_fill_qty,
-                    "cumulative_filled": cum_qty,
-                    "pct_filled": round(cum_qty / cfg.target_qty, 4),
-                }
-            # Top 5 bid/ask levels for book visualization
-            snap = book.snapshot()
-            replay_ticks.append({
-                "mid": round(snap.mid_price, 4),
-                "spread": round(snap.asks[0].price - snap.bids[0].price, 4) if snap.asks and snap.bids else 0,
-                "bids": [(round(l.price, 4), l.size) for l in snap.bids[:5]],
-                "asks": [(round(l.price, 4), l.size) for l in snap.asks[:5]],
-                "agents": replay_agents,
-            })
+            # Collect replay frame (skip for non-replay seeds to save time)
+            if self._collect_replay:
+                replay_agents = {}
+                for agent in self._agents:
+                    aid = agent.agent_id
+                    af = agent_fills[aid]
+                    n_orders = len(all_agent_orders.get(aid, []))
+                    n_market = sum(1 for o in all_agent_orders.get(aid, []) if o.order_type == OrderType.MARKET)
+                    tick_fill_qty = (
+                        sum(f.size for f in background_fills.get(aid, []))
+                        + sum(f.size for f in tick_fills.get(aid, []))
+                        + sum(f.size for f in post_background_fills.get(aid, []))
+                    )
+                    cum_qty = sum(f.size for f in af)
+                    replay_agents[aid] = {
+                        "orders": n_orders,
+                        "market_orders": n_market,
+                        "limit_orders": n_orders - n_market,
+                        "filled_this_tick": tick_fill_qty,
+                        "cumulative_filled": cum_qty,
+                        "pct_filled": round(cum_qty / cfg.target_qty, 4),
+                    }
+                # Top 5 bid/ask levels for book visualization
+                snap = book.snapshot()
+                replay_ticks.append({
+                    "mid": round(snap.mid_price, 4),
+                    "spread": round(snap.asks[0].price - snap.bids[0].price, 4) if snap.asks and snap.bids else 0,
+                    "bids": [(round(l.price, 4), l.size) for l in snap.bids[:5]],
+                    "asks": [(round(l.price, 4), l.size) for l in snap.asks[:5]],
+                    "agents": replay_agents,
+                })
 
             # Track per-tick stats for charts
             for agent in self._agents:

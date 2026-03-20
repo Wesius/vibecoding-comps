@@ -5,6 +5,7 @@ import json
 import os
 import sys
 import tempfile
+from concurrent.futures import ProcessPoolExecutor
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -38,6 +39,29 @@ def _load_agent_class(agent_dir: Path, player_name: str) -> type | None:
     return getattr(module, "Agent", None)
 
 
+def _run_seed_worker(agent_dirs_info, sim_config, seed_seq, collect_replay):
+    """Run one simulation seed. Called in a worker process."""
+    agents = []
+    for dir_str, player_name in agent_dirs_info:
+        agent_cls = _load_agent_class(Path(dir_str), player_name)
+        if agent_cls is None:
+            continue
+        try:
+            agent = agent_cls(agent_id=player_name, target_qty=sim_config.target_qty)
+            agents.append(agent)
+        except Exception:
+            continue
+
+    if not agents:
+        return None
+
+    sim = Simulation(
+        agents=agents, config=sim_config, seed=seed_seq,
+        collect_replay=collect_replay,
+    )
+    return sim.run()
+
+
 def run_tournament(config: ServerConfig) -> dict:
     """Run a tournament with all submitted agents.
 
@@ -51,8 +75,8 @@ def run_tournament(config: ServerConfig) -> dict:
     if not player_dirs:
         raise ValueError("No agents have been submitted yet.")
 
-    # Load all agent classes
-    agent_factories: list[tuple[type, dict]] = []
+    # Validate agents can load (also populates errors for broken agents)
+    valid_dirs: list[Path] = []
     errors: dict[str, str] = {}
 
     for player_dir in player_dirs:
@@ -60,11 +84,14 @@ def run_tournament(config: ServerConfig) -> dict:
         agent_cls = _load_agent_class(player_dir, player_name)
         if agent_cls is None:
             errors[player_name] = "Failed to load agent."
-            continue
-        agent_factories.append((agent_cls, {"agent_id": player_name}))
+        else:
+            valid_dirs.append(player_dir)
 
-    if not agent_factories:
+    if not valid_dirs:
         raise ValueError("No valid agents could be loaded.")
+
+    agent_ids = [d.name for d in valid_dirs]
+    agent_dirs_info = [(str(d), d.name) for d in valid_dirs]
 
     # Run tournament
     sim_config = SimulationConfig(
@@ -75,57 +102,66 @@ def run_tournament(config: ServerConfig) -> dict:
     sim_seeds = master_ss.spawn(config.seeds_per_tournament)
 
     n_ticks = sim_config.n_ticks
-    agent_scores: dict[str, list[float]] = {
-        kwargs["agent_id"]: [] for _, kwargs in agent_factories
-    }
+    agent_scores: dict[str, list[float]] = {aid: [] for aid in agent_ids}
     # Accumulate per-tick data across seeds for averaging
     agent_fill_pct_sum: dict[str, np.ndarray] = {
-        kwargs["agent_id"]: np.zeros(n_ticks) for _, kwargs in agent_factories
+        aid: np.zeros(n_ticks) for aid in agent_ids
     }
     agent_price_sum: dict[str, np.ndarray] = {
-        kwargs["agent_id"]: np.zeros(n_ticks) for _, kwargs in agent_factories
+        aid: np.zeros(n_ticks) for aid in agent_ids
     }
-    agent_seed_count: dict[str, int] = {
-        kwargs["agent_id"]: 0 for _, kwargs in agent_factories
-    }
+    agent_seed_count: dict[str, int] = {aid: 0 for aid in agent_ids}
     mid_price_sum = np.zeros(n_ticks)
     spread_sum = np.zeros(n_ticks)
     market_seed_count = 0
+    replay_data: list[dict] = []
 
-    for seed_seq in sim_seeds:
-        # Fresh instances per seed
-        agents: list[BaseAgent] = []
-        for agent_cls, kwargs in agent_factories:
+    # Run seeds in parallel across CPU cores
+    max_workers = min(os.cpu_count() or 4, config.seeds_per_tournament)
+    with ProcessPoolExecutor(max_workers=max_workers) as executor:
+        futures = [
+            executor.submit(
+                _run_seed_worker, agent_dirs_info, sim_config, ss, i == 0
+            )
+            for i, ss in enumerate(sim_seeds)
+        ]
+
+        for i, future in enumerate(futures):
             try:
-                agent = agent_cls(
-                    agent_id=kwargs["agent_id"],
-                    target_qty=sim_config.target_qty,
-                )
-                agents.append(agent)
+                output = future.result()
             except Exception:
-                agent_scores[kwargs["agent_id"]].append(float("inf"))
+                for aid in agent_ids:
+                    agent_scores[aid].append(float("inf"))
+                continue
 
-        if not agents:
-            continue
+            if output is None:
+                for aid in agent_ids:
+                    agent_scores[aid].append(float("inf"))
+                continue
 
-        sim = Simulation(agents=agents, config=sim_config, seed=seed_seq)
-        results, tick_mids, tick_spreads, replay_ticks = sim.run()
+            results, tick_mids, tick_spreads, replay_ticks = output
 
-        mid_price_sum += np.array(tick_mids)
-        spread_sum += np.array(tick_spreads)
+            mid_price_sum += np.array(tick_mids)
+            spread_sum += np.array(tick_spreads)
 
-        # Save replay from first seed only
-        if market_seed_count == 0:
-            replay_data = replay_ticks
+            if i == 0:
+                replay_data = replay_ticks
 
-        market_seed_count += 1
+            market_seed_count += 1
 
-        for result in results:
-            agent_scores[result.agent_id].append(result.implementation_shortfall)
-            if result.cumulative_fill_pct is not None:
-                agent_fill_pct_sum[result.agent_id] += np.array(result.cumulative_fill_pct)
-                agent_price_sum[result.agent_id] += np.array(result.running_avg_price)
-                agent_seed_count[result.agent_id] += 1
+            seen = set()
+            for result in results:
+                agent_scores[result.agent_id].append(result.implementation_shortfall)
+                if result.cumulative_fill_pct is not None:
+                    agent_fill_pct_sum[result.agent_id] += np.array(result.cumulative_fill_pct)
+                    agent_price_sum[result.agent_id] += np.array(result.running_avg_price)
+                    agent_seed_count[result.agent_id] += 1
+                seen.add(result.agent_id)
+
+            # Agents that failed to instantiate in this worker get inf
+            for aid in agent_ids:
+                if aid not in seen:
+                    agent_scores[aid].append(float("inf"))
 
     # Compute rankings
     rankings: list[dict] = []
@@ -177,7 +213,7 @@ def run_tournament(config: ServerConfig) -> dict:
     # Save replay data to disk
     replay_path = config.data_dir / "replay.json"
     tmp_replay = replay_path.with_suffix(".tmp")
-    tmp_replay.write_text(json.dumps({"ticks": replay_data, "agents": [kwargs["agent_id"] for _, kwargs in agent_factories]}))
+    tmp_replay.write_text(json.dumps({"ticks": replay_data, "agents": agent_ids}))
     os.replace(tmp_replay, replay_path)
 
     return {
