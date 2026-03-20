@@ -135,7 +135,7 @@ class SimulationConfig:
     # Price model
     volatility: float = 0.0002
     drift: float = 0.0
-    permanent_impact_bps: float = 0.5
+    permanent_impact_bps: float = 2.0
     # Market maker
     mm_n_levels: int = 10
     mm_base_spread_bps: float = 10.0
