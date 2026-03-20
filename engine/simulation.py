@@ -146,6 +146,7 @@ class Simulation:
         tick_spreads: list[float] = []
         tape: list[TradeTapeEntry] = []
         prev_tick_agent_flow = 0
+        cumulative_agent_flow = 0
 
         for tick in range(cfg.n_ticks):
             book.expire_orders(tick)
@@ -156,7 +157,7 @@ class Simulation:
             # [B] BACKGROUND ORDER GENERATION
             mm_orders = market_maker.generate_quotes(
                 mid_price=mid,
-                net_agent_flow=prev_tick_agent_flow,
+                net_agent_flow=cumulative_agent_flow,
                 recent_volatility=price_model.recent_volatility,
             )
             noise_orders = noise_trader.generate_orders(
@@ -287,6 +288,7 @@ class Simulation:
                 for fills in tick_fills.values()
                 for fill in fills
             )
+            cumulative_agent_flow += prev_tick_agent_flow
 
             # Track per-tick stats for charts
             for agent in self._agents:
