@@ -128,13 +128,11 @@ def run_tournament(config: ServerConfig) -> dict:
         finite = [s for s in scores if s != float("inf")]
         mean_is = float(np.mean(finite)) if finite else float("inf")
         count = agent_seed_count[agent_id]
-        # Downsample to 50 points for the frontend
         if count > 0:
             avg_pct = agent_fill_pct_sum[agent_id] / count
             avg_price = agent_price_sum[agent_id] / count
-            step = max(1, n_ticks // 50)
-            fill_curve = [round(float(avg_pct[i]), 4) for i in range(0, n_ticks, step)]
-            price_curve = [round(float(avg_price[i]), 4) for i in range(0, n_ticks, step)]
+            fill_curve = [round(float(v), 4) for v in avg_pct]
+            price_curve = [round(float(v), 4) for v in avg_price]
         else:
             fill_curve = []
             price_curve = []
@@ -160,13 +158,11 @@ def run_tournament(config: ServerConfig) -> dict:
             "error": error,
         })
 
-    # Downsample market data
-    step = max(1, n_ticks // 50)
     if market_seed_count > 0:
         avg_mid = mid_price_sum / market_seed_count
         avg_spread = spread_sum / market_seed_count
-        mid_curve = [round(float(avg_mid[i]), 4) for i in range(0, n_ticks, step)]
-        spread_curve = [round(float(avg_spread[i]), 4) for i in range(0, n_ticks, step)]
+        mid_curve = [round(float(v), 4) for v in avg_mid]
+        spread_curve = [round(float(v), 4) for v in avg_spread]
     else:
         mid_curve = []
         spread_curve = []
