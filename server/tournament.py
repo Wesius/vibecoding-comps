@@ -109,10 +109,15 @@ def run_tournament(config: ServerConfig) -> dict:
             continue
 
         sim = Simulation(agents=agents, config=sim_config, seed=seed_seq)
-        results, tick_mids, tick_spreads = sim.run()
+        results, tick_mids, tick_spreads, replay_ticks = sim.run()
 
         mid_price_sum += np.array(tick_mids)
         spread_sum += np.array(tick_spreads)
+
+        # Save replay from first seed only
+        if market_seed_count == 0:
+            replay_data = replay_ticks
+
         market_seed_count += 1
 
         for result in results:
@@ -169,6 +174,12 @@ def run_tournament(config: ServerConfig) -> dict:
 
     tournament_id = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H-%M-%S")
 
+    # Save replay data to disk
+    replay_path = config.data_dir / "replay.json"
+    tmp_replay = replay_path.with_suffix(".tmp")
+    tmp_replay.write_text(json.dumps({"ticks": replay_data, "agents": [kwargs["agent_id"] for _, kwargs in agent_factories]}))
+    os.replace(tmp_replay, replay_path)
+
     return {
         "tournament_id": tournament_id,
         "results": rankings,
@@ -181,7 +192,14 @@ def update_leaderboard(config: ServerConfig, tournament_result: dict) -> None:
     """Update the leaderboard JSON file with new tournament results."""
     leaderboard_path = config.leaderboard_path
 
-    # Leaderboard just shows the most recent tournament
+    # Load existing to preserve history
+    if leaderboard_path.exists():
+        existing = json.loads(leaderboard_path.read_text())
+        history = existing.get("history", [])
+    else:
+        history = []
+
+    # Leaderboard shows the most recent tournament
     standings: list[dict] = []
     for entry in tournament_result["results"]:
         s = {
@@ -196,12 +214,21 @@ def update_leaderboard(config: ServerConfig, tournament_result: dict) -> None:
             s["price_curve"] = entry["price_curve"]
         standings.append(s)
 
+    # Append to history (compact: just name->score per tournament)
+    history.append({
+        "t": tournament_result["tournament_id"],
+        "s": {entry["name"]: entry["mean_is"] for entry in tournament_result["results"]},
+    })
+    # Cap at 50 entries
+    history = history[-50:]
+
     data = {
         "updated_at": datetime.now(timezone.utc).isoformat(),
         "tournament_id": tournament_result["tournament_id"],
         "standings": standings,
         "mid_curve": tournament_result.get("mid_curve", []),
         "spread_curve": tournament_result.get("spread_curve", []),
+        "history": history,
     }
 
     # Atomic write

@@ -15,6 +15,7 @@ from engine.types import (
     CancelOrder,
     Fill,
     Order,
+    OrderType,
     RestingOrderInfo,
     Side,
     SimulationConfig,
@@ -144,6 +145,8 @@ class Simulation:
         }
         tick_mid_prices: list[float] = []
         tick_spreads: list[float] = []
+        # Replay data: per-tick per-agent details
+        replay_ticks: list[dict] = []
         tape: list[TradeTapeEntry] = []
         prev_tick_agent_flow = 0
         cumulative_agent_flow = 0
@@ -290,6 +293,33 @@ class Simulation:
             )
             cumulative_agent_flow += prev_tick_agent_flow
 
+            # Collect replay frame
+            replay_agents = {}
+            for agent in self._agents:
+                aid = agent.agent_id
+                af = agent_fills[aid]
+                n_orders = len(all_agent_orders.get(aid, []))
+                n_market = sum(1 for o in all_agent_orders.get(aid, []) if o.order_type == OrderType.MARKET)
+                tick_fill_qty = sum(f.size for f in tick_fills.get(aid, []))
+                cum_qty = sum(f.size for f in af)
+                replay_agents[aid] = {
+                    "orders": n_orders,
+                    "market_orders": n_market,
+                    "limit_orders": n_orders - n_market,
+                    "filled_this_tick": tick_fill_qty,
+                    "cumulative_filled": cum_qty,
+                    "pct_filled": round(cum_qty / cfg.target_qty, 4),
+                }
+            # Top 5 bid/ask levels for book visualization
+            snap = book.snapshot()
+            replay_ticks.append({
+                "mid": round(snap.mid_price, 4),
+                "spread": round(snap.asks[0].price - snap.bids[0].price, 4) if snap.asks and snap.bids else 0,
+                "bids": [(round(l.price, 4), l.size) for l in snap.bids[:5]],
+                "asks": [(round(l.price, 4), l.size) for l in snap.asks[:5]],
+                "agents": replay_agents,
+            })
+
             # Track per-tick stats for charts
             for agent in self._agents:
                 aid = agent.agent_id
@@ -325,4 +355,4 @@ class Simulation:
                 running_avg_price=tick_avg_price[agent.agent_id],
             ))
 
-        return results, tick_mid_prices, tick_spreads
+        return results, tick_mid_prices, tick_spreads, replay_ticks

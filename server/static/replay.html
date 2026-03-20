@@ -1,0 +1,368 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Replay — The Execution Game</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@300;400;500;700&family=Space+Mono:wght@400;700&display=swap" rel="stylesheet">
+<style>
+  :root {
+    --bg: #0a0a0a;
+    --surface: #111111;
+    --border: #1e1e1e;
+    --amber: #FFB000;
+    --green: #00E676;
+    --red: #FF5252;
+    --text: #d4d4d4;
+    --text-dim: #5a5a5a;
+    --text-bright: #ffffff;
+  }
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body {
+    background: var(--bg);
+    color: var(--text);
+    font-family: 'JetBrains Mono', monospace;
+    min-height: 100vh;
+  }
+  body::after {
+    content: '';
+    position: fixed;
+    inset: 0;
+    background: repeating-linear-gradient(0deg, transparent, transparent 2px, rgba(0,0,0,0.03) 2px, rgba(0,0,0,0.03) 4px);
+    pointer-events: none;
+    z-index: 100;
+  }
+  .container { max-width: 900px; margin: 0 auto; padding: 2rem 1.5rem; }
+  .header {
+    border-bottom: 1px solid var(--border);
+    padding-bottom: 1rem;
+    margin-bottom: 1.5rem;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+  }
+  .header h1 {
+    font-family: 'Space Mono', monospace;
+    font-size: 1.2rem;
+    font-weight: 700;
+    color: var(--text-bright);
+  }
+  .header a {
+    font-size: 0.65rem;
+    color: var(--amber);
+    text-decoration: none;
+  }
+  .controls {
+    display: flex;
+    align-items: center;
+    gap: 1rem;
+    margin-bottom: 1rem;
+    font-size: 0.7rem;
+  }
+  .controls button {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    color: var(--amber);
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 0.7rem;
+    padding: 0.4rem 0.8rem;
+    cursor: pointer;
+  }
+  .controls button:hover { border-color: var(--amber); }
+  .controls span { color: var(--text-dim); }
+  #tickNum { color: var(--text-bright); min-width: 5ch; display: inline-block; }
+  .speed-label { color: var(--text-dim); font-size: 0.6rem; }
+  input[type=range] {
+    width: 80px;
+    accent-color: var(--amber);
+  }
+
+  .panels {
+    display: grid;
+    grid-template-columns: 200px 1fr;
+    gap: 1rem;
+    margin-bottom: 1rem;
+  }
+  .book-panel {
+    border: 1px solid var(--border);
+    background: var(--surface);
+    padding: 0.8rem;
+  }
+  .book-panel h3 {
+    font-size: 0.55rem;
+    color: var(--text-dim);
+    letter-spacing: 0.1em;
+    text-transform: uppercase;
+    margin-bottom: 0.5rem;
+  }
+  .book-row {
+    display: flex;
+    justify-content: space-between;
+    font-size: 0.6rem;
+    padding: 0.15rem 0;
+    font-variant-numeric: tabular-nums;
+  }
+  .book-row .price { color: var(--text); }
+  .book-row .size { min-width: 4ch; text-align: right; }
+  .book-row.bid .size { color: var(--green); }
+  .book-row.ask .size { color: var(--red); }
+  .book-spread {
+    text-align: center;
+    font-size: 0.55rem;
+    color: var(--text-dim);
+    padding: 0.3rem 0;
+    border-top: 1px solid var(--border);
+    border-bottom: 1px solid var(--border);
+    margin: 0.3rem 0;
+  }
+
+  .chart-panel {
+    border: 1px solid var(--border);
+    background: var(--surface);
+    padding: 0.8rem;
+  }
+  .chart-panel canvas {
+    width: 100%;
+    height: 200px;
+    display: block;
+  }
+
+  .agents-panel {
+    border: 1px solid var(--border);
+    background: var(--surface);
+    padding: 0.8rem;
+  }
+  .agents-panel h3 {
+    font-size: 0.55rem;
+    color: var(--text-dim);
+    letter-spacing: 0.1em;
+    text-transform: uppercase;
+    margin-bottom: 0.5rem;
+  }
+  .agent-row {
+    display: flex;
+    justify-content: space-between;
+    font-size: 0.65rem;
+    padding: 0.25rem 0;
+    border-bottom: 1px solid var(--border);
+  }
+  .agent-row:last-child { border-bottom: none; }
+  .agent-name { color: var(--text-bright); font-weight: 500; }
+  .agent-stat { color: var(--text-dim); font-variant-numeric: tabular-nums; }
+  .agent-bar {
+    height: 3px;
+    background: var(--amber);
+    margin-top: 0.2rem;
+    border-radius: 1px;
+    transition: width 0.1s;
+  }
+
+  .empty-msg {
+    text-align: center;
+    padding: 4rem;
+    color: var(--text-dim);
+    font-size: 0.75rem;
+  }
+
+  @media (max-width: 600px) {
+    .panels { grid-template-columns: 1fr; }
+  }
+</style>
+</head>
+<body>
+<div class="container">
+  <div class="header">
+    <h1>Replay</h1>
+    <a href="/">&larr; Leaderboard</a>
+  </div>
+
+  <div id="app">
+    <div class="empty-msg">Loading replay data...</div>
+  </div>
+</div>
+
+<script>
+const COLORS = ['#FFB000', '#00E676', '#448AFF', '#FF5252', '#E040FB', '#00BCD4', '#FF9100', '#76FF03'];
+let data = null;
+let tick = 0;
+let playing = false;
+let interval = null;
+let speed = 30; // ms per tick
+
+async function init() {
+  const res = await fetch('/replay-data');
+  data = await res.json();
+  if (!data.ticks || !data.ticks.length) {
+    document.getElementById('app').innerHTML = '<div class="empty-msg">No replay data yet. Run a tournament first.</div>';
+    return;
+  }
+  buildUI();
+  renderTick(0);
+}
+
+function buildUI() {
+  document.getElementById('app').innerHTML = `
+    <div class="controls">
+      <button id="playBtn" onclick="togglePlay()">Play</button>
+      <button onclick="stepBack()">&larr;</button>
+      <button onclick="stepFwd()">&rarr;</button>
+      <span>Tick <span id="tickNum">0</span> / ${data.ticks.length - 1}</span>
+      <input type="range" id="scrubber" min="0" max="${data.ticks.length - 1}" value="0" oninput="scrub(this.value)">
+      <span class="speed-label">Speed</span>
+      <input type="range" id="speedCtrl" min="5" max="200" value="30" oninput="setSpeed(this.value)">
+    </div>
+    <div class="panels">
+      <div>
+        <div class="book-panel" id="bookPanel"></div>
+        <div class="agents-panel" id="agentsPanel" style="margin-top:1rem;"></div>
+      </div>
+      <div class="chart-panel">
+        <canvas id="replayChart"></canvas>
+      </div>
+    </div>
+  `;
+}
+
+function renderTick(t) {
+  tick = t;
+  const frame = data.ticks[t];
+  document.getElementById('tickNum').textContent = t;
+  document.getElementById('scrubber').value = t;
+
+  // Book
+  const bookEl = document.getElementById('bookPanel');
+  let bookHtml = '<h3>Order Book</h3>';
+  const asks = (frame.asks || []).slice().reverse();
+  for (const [price, size] of asks) {
+    const barW = Math.min(100, size / 5);
+    bookHtml += `<div class="book-row ask"><span class="price">${price.toFixed(2)}</span><span class="size">${size}</span></div>`;
+  }
+  bookHtml += `<div class="book-spread">spread: ${frame.spread.toFixed(4)}</div>`;
+  for (const [price, size] of (frame.bids || [])) {
+    bookHtml += `<div class="book-row bid"><span class="price">${price.toFixed(2)}</span><span class="size">${size}</span></div>`;
+  }
+  bookEl.innerHTML = bookHtml;
+
+  // Agents
+  const agEl = document.getElementById('agentsPanel');
+  let agHtml = '<h3>Agents</h3>';
+  const agentNames = data.agents || Object.keys(frame.agents);
+  agentNames.forEach((name, i) => {
+    const a = frame.agents[name];
+    if (!a) return;
+    const color = COLORS[i % COLORS.length];
+    const pct = (a.pct_filled * 100).toFixed(1);
+    agHtml += `<div class="agent-row"><div><span class="agent-name" style="color:${color}">${name}</span></div><div class="agent-stat">${pct}% filled &middot; +${a.filled_this_tick} this tick</div></div>`;
+    agHtml += `<div class="agent-bar" style="width:${pct}%;background:${color}"></div>`;
+  });
+  agEl.innerHTML = agHtml;
+
+  // Price chart with playhead
+  drawReplayChart(t);
+}
+
+function drawReplayChart(currentTick) {
+  const canvas = document.getElementById('replayChart');
+  const ctx = canvas.getContext('2d');
+  const dpr = window.devicePixelRatio || 1;
+  const rect = canvas.getBoundingClientRect();
+  canvas.width = rect.width * dpr;
+  canvas.height = rect.height * dpr;
+  ctx.scale(dpr, dpr);
+  const W = rect.width, H = rect.height;
+  const pad = { top: 10, right: 10, bottom: 20, left: 45 };
+  const plotW = W - pad.left - pad.right;
+  const plotH = H - pad.top - pad.bottom;
+
+  const mids = data.ticks.map(t => t.mid);
+  const yMin = Math.min(...mids) - 0.05;
+  const yMax = Math.max(...mids) + 0.05;
+  const yRange = yMax - yMin;
+  const n = mids.length;
+
+  // Grid
+  ctx.strokeStyle = '#1e1e1e';
+  ctx.lineWidth = 1;
+  for (let i = 0; i <= 4; i++) {
+    const y = pad.top + (plotH / 4) * i;
+    ctx.beginPath(); ctx.moveTo(pad.left, y); ctx.lineTo(W - pad.right, y); ctx.stroke();
+  }
+  ctx.fillStyle = '#5a5a5a';
+  ctx.font = '10px JetBrains Mono';
+  ctx.textAlign = 'right';
+  for (let i = 0; i <= 4; i++) {
+    const val = yMax - (yRange / 4) * i;
+    ctx.fillText('$' + val.toFixed(2), pad.left - 5, pad.top + (plotH / 4) * i + 3);
+  }
+
+  // Mid price line (up to current tick)
+  ctx.strokeStyle = '#448AFF';
+  ctx.lineWidth = 1.5;
+  ctx.beginPath();
+  for (let i = 0; i <= currentTick && i < n; i++) {
+    const x = pad.left + (i / (n - 1)) * plotW;
+    const y = pad.top + (1 - (mids[i] - yMin) / yRange) * plotH;
+    if (i === 0) ctx.moveTo(x, y); else ctx.lineTo(x, y);
+  }
+  ctx.stroke();
+
+  // Future price line (dimmed)
+  if (currentTick < n - 1) {
+    ctx.strokeStyle = 'rgba(68,138,255,0.15)';
+    ctx.beginPath();
+    for (let i = currentTick; i < n; i++) {
+      const x = pad.left + (i / (n - 1)) * plotW;
+      const y = pad.top + (1 - (mids[i] - yMin) / yRange) * plotH;
+      if (i === currentTick) ctx.moveTo(x, y); else ctx.lineTo(x, y);
+    }
+    ctx.stroke();
+  }
+
+  // Playhead
+  const px = pad.left + (currentTick / (n - 1)) * plotW;
+  ctx.strokeStyle = 'rgba(255,176,0,0.5)';
+  ctx.lineWidth = 1;
+  ctx.beginPath(); ctx.moveTo(px, pad.top); ctx.lineTo(px, pad.top + plotH); ctx.stroke();
+
+  // Fill dots for each agent at current tick
+  const frame = data.ticks[currentTick];
+  const agentNames = data.agents || Object.keys(frame.agents);
+  agentNames.forEach((name, idx) => {
+    const a = frame.agents[name];
+    if (!a || a.filled_this_tick === 0) return;
+    const color = COLORS[idx % COLORS.length];
+    const y = pad.top + (1 - (mids[currentTick] - yMin) / yRange) * plotH;
+    ctx.fillStyle = color;
+    ctx.beginPath();
+    ctx.arc(px, y, 3 + Math.min(4, a.filled_this_tick / 20), 0, Math.PI * 2);
+    ctx.fill();
+  });
+}
+
+function togglePlay() {
+  playing = !playing;
+  document.getElementById('playBtn').textContent = playing ? 'Pause' : 'Play';
+  if (playing) {
+    if (tick >= data.ticks.length - 1) tick = 0;
+    interval = setInterval(() => {
+      if (tick >= data.ticks.length - 1) { togglePlay(); return; }
+      renderTick(tick + 1);
+    }, speed);
+  } else {
+    clearInterval(interval);
+  }
+}
+
+function stepFwd() { if (data && tick < data.ticks.length - 1) renderTick(tick + 1); }
+function stepBack() { if (data && tick > 0) renderTick(tick - 1); }
+function scrub(v) { if (data) renderTick(parseInt(v)); }
+function setSpeed(v) {
+  speed = 205 - parseInt(v); // invert so right = faster
+  if (playing) { clearInterval(interval); interval = setInterval(() => { if (tick >= data.ticks.length - 1) { togglePlay(); return; } renderTick(tick + 1); }, speed); }
+}
+
+init();
+</script>
+</body>
+</html>

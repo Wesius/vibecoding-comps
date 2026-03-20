@@ -79,7 +79,7 @@ class Tournament:
                 config=self._config,
                 seed=seed_seq,
             )
-            sim_results, _, _ = sim.run()
+            sim_results, _, _, _ = sim.run()
 
             for agent_result in sim_results:
                 result.agent_scores[agent_result.agent_id].append(

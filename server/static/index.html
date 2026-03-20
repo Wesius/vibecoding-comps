@@ -197,6 +197,15 @@
     color: var(--text-dim);
   }
 
+  .spark-cell {
+    padding: 0.4rem 0.6rem;
+  }
+
+  .spark-cell svg {
+    display: block;
+    margin-left: auto;
+  }
+
   /* empty state */
   .empty {
     padding: 4rem 2rem;
@@ -483,7 +492,7 @@
   </div>
 
   <div class="footer">
-    <div>vibecoding-comps</div>
+    <div><a href="/replay" style="color:var(--amber);text-decoration:none;">Watch Replay</a> &middot; vibecoding-comps</div>
     <div id="player-count"></div>
   </div>
 </div>
@@ -524,23 +533,28 @@ function render(data) {
     return;
   }
 
+  const history = data.history || [];
+
   let html = `<table>
     <thead><tr>
       <th>#</th>
       <th>Player</th>
       <th>Score (bps)</th>
       <th>Avg Fill Price</th>
+      <th>Trend</th>
     </tr></thead><tbody>`;
 
   for (const s of standings) {
     const cls = s.rank <= 3 ? `rank-${s.rank}` : '';
     const mean = s.mean_is === Infinity ? '—' : s.mean_is.toFixed(2);
     const avgFill = s.mean_is === Infinity ? '—' : '$' + (100 * (1 + s.mean_is / 10000)).toFixed(4);
+    const spark = makeSparkline(s.name, history);
     html += `<tr class="${cls}">
       <td class="rank">${s.rank}</td>
       <td class="name">${s.name}</td>
       <td class="is-val">${mean}</td>
       <td class="best-val">${avgFill}</td>
+      <td class="spark-cell">${spark}</td>
     </tr>`;
   }
 
@@ -554,6 +568,22 @@ function render(data) {
 }
 
 const COLORS = ['#FFB000', '#00E676', '#448AFF', '#FF5252', '#E040FB', '#00BCD4', '#FF9100', '#76FF03'];
+
+function makeSparkline(name, history) {
+  const vals = history.map(h => h.s[name]).filter(v => v !== undefined && v !== Infinity);
+  if (vals.length < 2) return '';
+  const w = 60, h = 20, pad = 1;
+  const min = Math.min(...vals), max = Math.max(...vals);
+  const range = max - min || 1;
+  const pts = vals.map((v, i) => {
+    const x = pad + (i / (vals.length - 1)) * (w - pad * 2);
+    const y = pad + (1 - (v - min) / range) * (h - pad * 2);
+    return `${x.toFixed(1)},${y.toFixed(1)}`;
+  });
+  // Green if improving (last < first), red if worsening
+  const color = vals[vals.length - 1] <= vals[0] ? '#00E676' : '#FF5252';
+  return `<svg width="${w}" height="${h}" viewBox="0 0 ${w} ${h}"><polyline points="${pts.join(' ')}" fill="none" stroke="${color}" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg>`;
+}
 
 function drawChart(canvasId, legendId, standings, getValues, yLabel, formatY) {
   const canvas = document.getElementById(canvasId);

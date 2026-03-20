@@ -3,8 +3,10 @@ import logging
 from contextlib import asynccontextmanager
 from pathlib import Path
 
+import json
+
 from fastapi import FastAPI
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, JSONResponse
 
 from server.config import load_config
 from server.auth import create_auth_dependency
@@ -62,3 +64,16 @@ _STATIC_DIR = Path(__file__).parent / "static"
 @app.get("/")
 async def index():
     return FileResponse(_STATIC_DIR / "index.html")
+
+
+@app.get("/replay")
+async def replay_page():
+    return FileResponse(_STATIC_DIR / "replay.html")
+
+
+@app.get("/replay-data")
+async def replay_data():
+    path = config.data_dir / "replay.json"
+    if not path.exists():
+        return {"ticks": [], "agents": []}
+    return JSONResponse(content=json.loads(path.read_text()))

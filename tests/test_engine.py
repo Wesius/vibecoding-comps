@@ -138,7 +138,7 @@ class FakeSimulation:
         else:
             scores = {"fragile": float("inf"), "steady": 5.0}
 
-        return [
+        results = [
             AgentResult(
                 agent_id=agent.agent_id,
                 agent_class=type(agent).__name__,
@@ -151,6 +151,7 @@ class FakeSimulation:
             )
             for agent in self._agents
         ]
+        return results, [], [], []
 
 
 class TestOrder:
@@ -346,15 +347,15 @@ class TestSimulation:
         agents2 = [TWAPAgent("twap", 10000)]
         config = SimulationConfig(n_ticks=50)
 
-        r1 = Simulation(agents1, config, seed=123).run()
-        r2 = Simulation(agents2, config, seed=123).run()
+        r1 = Simulation(agents1, config, seed=123).run()[0]
+        r2 = Simulation(agents2, config, seed=123).run()[0]
 
         assert r1[0].implementation_shortfall == r2[0].implementation_shortfall
 
     def test_agents_get_fills(self):
         agents = [TWAPAgent("twap", 10000)]
         config = SimulationConfig(n_ticks=100)
-        results = Simulation(agents, config, seed=42).run()
+        results = Simulation(agents, config, seed=42).run()[0]
         assert results[0].total_filled > 0
 
     def test_naive_worse_than_twap(self):
@@ -385,12 +386,12 @@ class TestSimulation:
             agents=[PassiveLimitAgent("passive", 5)],
             config=config,
             seed=123,
-        ).run()[0]
+        ).run()[0][0]
 
         assert result.total_filled == 5
         assert result.remaining_qty == 0
 
-    def test_flow_signals_use_last_tick_flow_not_cumulative_flow(self, monkeypatch):
+    def test_flow_signals(self, monkeypatch):
         FakePriceModel.seen_flows = []
         StaticMarketMaker.seen_flows = []
         config = SimulationConfig(n_ticks=3, target_qty=6, noise_avg_orders=0)
@@ -403,10 +404,12 @@ class TestSimulation:
             agents=[FixedSliceAgent("slicer", 6)],
             config=config,
             seed=123,
-        ).run()
+        ).run()[0]
 
+        # Price model sees per-tick flow
         assert FakePriceModel.seen_flows == [0, 2, 2]
-        assert StaticMarketMaker.seen_flows == [0, 2, 2]
+        # Market maker sees cumulative flow
+        assert StaticMarketMaker.seen_flows == [0, 2, 4]
 
     def test_tournament_penalizes_any_incomplete_seed(self, monkeypatch):
         FakeSimulation.call_count = 0
@@ -437,7 +440,7 @@ class TestSimulation:
             agents=[CancelThenMarketAgent("repricer", 5)],
             config=config,
             seed=123,
-        ).run()[0]
+        ).run()[0][0]
 
         assert result.total_filled == 5
         assert result.remaining_qty == 0
