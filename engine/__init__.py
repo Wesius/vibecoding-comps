@@ -13,7 +13,6 @@ from engine.types import (
     SimulationConfig,
 )
 from engine.simulation import Simulation
-from engine.tournament import Tournament, TournamentResult
 from engine.scoring import implementation_shortfall
 
 __all__ = [
@@ -30,7 +29,5 @@ __all__ = [
     "AgentResult",
     "SimulationConfig",
     "Simulation",
-    "Tournament",
-    "TournamentResult",
     "implementation_shortfall",
 ]

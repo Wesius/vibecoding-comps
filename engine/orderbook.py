@@ -132,13 +132,12 @@ class OrderBook:
         return fills
 
     def get_resting_orders(self, agent_id: str) -> tuple[RestingOrderInfo, ...]:
-        """Return live resting orders for an agent with queue-ahead sizes."""
+        """Return live resting orders for an agent."""
         orders: list[RestingOrderInfo] = []
 
         for side, book in ((Side.BUY, self._bids), (Side.SELL, self._asks)):
             price_levels = sorted(book.keys(), reverse=side == Side.BUY)
             for price in price_levels:
-                queue_ahead = 0
                 for order in book[price]:
                     if order.agent_id == agent_id:
                         orders.append(
@@ -147,12 +146,11 @@ class OrderBook:
                                 side=side,
                                 price=price,
                                 remaining_size=order.remaining_size,
-                                queue_ahead=queue_ahead,
+                                queue_ahead=None,
                                 submitted_tick=order.submitted_tick,
                                 expires_tick=order.expires_tick,
                             )
                         )
-                    queue_ahead += order.remaining_size
 
         return tuple(orders)
 
@@ -194,6 +192,28 @@ class OrderBook:
             for empty_price in empty_prices:
                 del book[empty_price]
         return 0
+
+    def cancel_all_orders(self, agent_id: str) -> int:
+        """Cancel all live resting orders for the given agent.
+
+        Returns the removed quantity.
+        """
+        removed_qty = 0
+        for book in (self._bids, self._asks):
+            empty_prices: list[float] = []
+            for price, orders in book.items():
+                kept_orders: list[_RestingBookOrder] = []
+                for order in orders:
+                    if order.agent_id == agent_id:
+                        removed_qty += order.remaining_size
+                    else:
+                        kept_orders.append(order)
+                book[price] = kept_orders
+                if not kept_orders:
+                    empty_prices.append(price)
+            for empty_price in empty_prices:
+                del book[empty_price]
+        return removed_qty
 
     def expire_orders(self, current_tick: int) -> None:
         """Remove expired resting orders."""

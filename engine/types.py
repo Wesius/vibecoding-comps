@@ -88,7 +88,7 @@ class RestingOrderInfo:
     side: Side
     price: float
     remaining_size: int
-    queue_ahead: int
+    queue_ahead: int | None
     submitted_tick: int
     expires_tick: int | None
 

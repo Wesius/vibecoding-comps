@@ -169,6 +169,17 @@ class Simulation:
         prev_tick_agent_flow = 0
         cumulative_agent_flow = 0
 
+        def _record_resting_fills(
+            resting_fills: dict[str, list[Fill]],
+            fills_this_tick: dict[str, list[Fill]],
+        ) -> None:
+            if hasattr(market_maker, "observe_passive_fills"):
+                market_maker.observe_passive_fills(resting_fills.get("mm", []))
+            for participant_id, fills in resting_fills.items():
+                if participant_id in agent_fills:
+                    agent_fills[participant_id].extend(fills)
+                    fills_this_tick[participant_id].extend(fills)
+
         for tick in range(cfg.n_ticks):
             book.expire_orders(tick)
 
@@ -189,16 +200,14 @@ class Simulation:
 
             # [C] REFRESH MARKET MAKER QUOTES AND EXECUTE NOISE
             book.cancel_all_orders("mm")
-            for order in mm_orders:
-                assert order.price is not None
-                book.add_limit_order(
-                    order.side,
-                    order.price,
-                    order.size,
-                    order.agent_id or "mm",
-                    submitted_tick=tick,
-                    persistent=True,
-                )
+            mm_aggressor_fills, mm_resting_fills, mm_tape = matching.execute_orders(
+                book,
+                mm_orders,
+                tick,
+            )
+            tape.extend(mm_tape)
+            if hasattr(market_maker, "observe_passive_fills"):
+                market_maker.observe_passive_fills(mm_aggressor_fills.get("mm", []))
 
             noise_tape, background_fills = matching.execute_background_orders(
                 book,
@@ -207,27 +216,34 @@ class Simulation:
                 resting_order_ttl_ticks=cfg.noise_order_ttl_ticks,
             )
             tape.extend(noise_tape)
-            for agent_id, fills in background_fills.items():
-                if agent_id in agent_fills:
-                    agent_fills[agent_id].extend(fills)
+            fills_this_tick: dict[str, list[Fill]] = {
+                agent.agent_id: [] for agent in self._agents
+            }
+            _record_resting_fills(mm_resting_fills, fills_this_tick)
+            _record_resting_fills(background_fills, fills_this_tick)
 
-            # [D] SNAPSHOT FOR AGENTS
-            snapshot = book.snapshot()
-            tick_mid_prices.append(snapshot.mid_price)
-            if snapshot.asks and snapshot.bids:
-                tick_spreads.append(snapshot.asks[0].price - snapshot.bids[0].price)
+            # [D] TRACK PRE-AGENT MARKET STATE
+            initial_snapshot = book.snapshot()
+            tick_mid_prices.append(initial_snapshot.mid_price)
+            if initial_snapshot.asks and initial_snapshot.bids:
+                tick_spreads.append(
+                    initial_snapshot.asks[0].price - initial_snapshot.bids[0].price
+                )
             else:
                 tick_spreads.append(0.0)
 
-            # Trim tape to rolling window for agents
-            tape_window_entries = [
-                e for e in tape if e.tick >= tick - cfg.tape_window
-            ]
+            # [E] PROCESS AGENTS SEQUENTIALLY ON THE LIVE BOOK
+            agent_sequence = list(self._agents)
+            matching._rng.shuffle(agent_sequence)
+            submitted_orders: dict[str, int] = {
+                agent.agent_id: 0 for agent in self._agents
+            }
+            submitted_market_orders: dict[str, int] = {
+                agent.agent_id: 0 for agent in self._agents
+            }
+            tick_agent_flow = 0
 
-            # [E] COLLECT AGENT ORDERS
-            all_agent_orders: dict[str, list[Order]] = {}
-            pending_cancels: dict[str, list[int]] = {}
-            for agent in self._agents:
+            for agent in agent_sequence:
                 total_filled = sum(
                     f.size for f in agent_fills[agent.agent_id]
                 )
@@ -236,6 +252,10 @@ class Simulation:
                 resting_qty = sum(
                     order.remaining_size for order in resting_orders
                 )
+                snapshot = book.snapshot()
+                tape_window_entries = [
+                    entry for entry in tape if entry.tick >= tick - cfg.tape_window
+                ]
                 state = TickState(
                     tick=tick,
                     total_ticks=cfg.n_ticks,
@@ -280,24 +300,29 @@ class Simulation:
                     order_budget,
                     resting_orders,
                 )
-                pending_cancels[agent.agent_id] = validated_cancels
-                all_agent_orders[agent.agent_id] = validated
+                submitted_orders[agent.agent_id] = len(validated)
+                submitted_market_orders[agent.agent_id] = sum(
+                    1 for order in validated if order.order_type == OrderType.MARKET
+                )
 
-            for agent_id, order_ids in pending_cancels.items():
-                for order_id in order_ids:
-                    book.cancel_order(agent_id, order_id)
+                for order_id in validated_cancels:
+                    book.cancel_order(agent.agent_id, order_id)
 
-            # [F] EXECUTE AGENT ORDERS (shuffled)
-            tick_fills, tick_tape = matching.execute_agent_orders(
-                book,
-                all_agent_orders,
-                tick,
-                cfg.agent_order_ttl_ticks,
-            )
-
-            for agent_id, fills in tick_fills.items():
-                agent_fills[agent_id].extend(fills)
-            tape.extend(tick_tape)
+                aggressor_fills, tick_tape, resting_fills = (
+                    matching.execute_agent_orders(
+                        book,
+                        agent.agent_id,
+                        validated,
+                        tick,
+                        cfg.agent_order_ttl_ticks,
+                    )
+                )
+                if aggressor_fills:
+                    agent_fills[agent.agent_id].extend(aggressor_fills)
+                    fills_this_tick[agent.agent_id].extend(aggressor_fills)
+                    tick_agent_flow += sum(fill.size for fill in aggressor_fills)
+                tape.extend(tick_tape)
+                _record_resting_fills(resting_fills, fills_this_tick)
 
             post_noise_orders = noise_trader.generate_orders(
                 mid_price=mid,
@@ -313,15 +338,9 @@ class Simulation:
                 )
             )
             tape.extend(post_noise_tape)
-            for agent_id, fills in post_background_fills.items():
-                if agent_id in agent_fills:
-                    agent_fills[agent_id].extend(fills)
+            _record_resting_fills(post_background_fills, fills_this_tick)
 
-            prev_tick_agent_flow = sum(
-                fill.size
-                for fills in tick_fills.values()
-                for fill in fills
-            )
+            prev_tick_agent_flow = tick_agent_flow
             cumulative_agent_flow += prev_tick_agent_flow
 
             # Collect replay frame (skip for non-replay seeds to save time)
@@ -330,12 +349,10 @@ class Simulation:
                 for agent in self._agents:
                     aid = agent.agent_id
                     af = agent_fills[aid]
-                    n_orders = len(all_agent_orders.get(aid, []))
-                    n_market = sum(1 for o in all_agent_orders.get(aid, []) if o.order_type == OrderType.MARKET)
-                    tick_fill_qty = (
-                        sum(f.size for f in background_fills.get(aid, []))
-                        + sum(f.size for f in tick_fills.get(aid, []))
-                        + sum(f.size for f in post_background_fills.get(aid, []))
+                    n_orders = submitted_orders.get(aid, 0)
+                    n_market = submitted_market_orders.get(aid, 0)
+                    tick_fill_qty = sum(
+                        fill.size for fill in fills_this_tick.get(aid, [])
                     )
                     cum_qty = sum(f.size for f in af)
                     replay_agents[aid] = {

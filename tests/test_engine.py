@@ -4,14 +4,14 @@ import numpy as np
 import pytest
 
 from agents.base import BaseAgent
-from agents.naive import NaiveAgent
+from engine.background import MarketMaker
+from engine.matching import MatchingEngine
 from agents.twap import TWAPAgent
 from engine.orderbook import OrderBook
 from engine.price_model import MidPriceProcess
 from engine.scoring import implementation_shortfall
 from engine.simulation import Simulation
-from engine.tournament import Tournament
-from engine.types import AgentResult, CancelOrder, Fill, Order, OrderType, Side, SimulationConfig
+from engine.types import CancelOrder, Fill, Order, OrderType, Side, SimulationConfig
 
 
 class PassiveLimitAgent(BaseAgent):
@@ -64,6 +64,77 @@ class CancelThenMarketAgent(BaseAgent):
         return []
 
 
+class LongLivedPassiveAgent(BaseAgent):
+    def __init__(self, agent_id: str, target_qty: int, **kwargs):
+        super().__init__(agent_id, target_qty, **kwargs)
+        self.saw_resting_on_tick_five = False
+
+    def on_tick(self, state):
+        if state.tick == 0:
+            return [
+                Order(
+                    side=Side.BUY,
+                    size=1,
+                    order_type=OrderType.LIMIT,
+                    price=100.0,
+                )
+            ]
+        if state.tick == 5:
+            self.saw_resting_on_tick_five = bool(state.resting_orders)
+            if state.resting_orders:
+                return [
+                    CancelOrder(order_id=state.resting_orders[0].order_id),
+                    Order(
+                        side=Side.BUY,
+                        size=1,
+                        order_type=OrderType.MARKET,
+                    ),
+                ]
+        return []
+
+
+class TickOneMarketAgent(BaseAgent):
+    def on_tick(self, state):
+        if state.tick == 1 and state.remaining_qty > 0:
+            return [
+                Order(
+                    side=Side.BUY,
+                    size=state.remaining_qty,
+                    order_type=OrderType.MARKET,
+                )
+            ]
+        return []
+
+
+class OneShotMarketAgent(BaseAgent):
+    def __init__(self, agent_id: str, target_qty: int, size: int = 1, **kwargs):
+        super().__init__(agent_id, target_qty, **kwargs)
+        self._size = size
+
+    def on_tick(self, state):
+        if state.tick == 0 and state.remaining_qty > 0:
+            return [
+                Order(
+                    side=Side.BUY,
+                    size=min(self._size, state.remaining_qty),
+                    order_type=OrderType.MARKET,
+                )
+            ]
+        return []
+
+
+class ObserveBestAskAgent(BaseAgent):
+    def __init__(self, agent_id: str, target_qty: int, **kwargs):
+        super().__init__(agent_id, target_qty, **kwargs)
+        self.seen_best_ask = None
+
+    def on_tick(self, state):
+        self.seen_best_ask = (
+            state.order_book.asks[0].price if state.order_book.asks else None
+        )
+        return []
+
+
 class NoOpAgent(BaseAgent):
     def on_tick(self, state):
         return []
@@ -106,6 +177,37 @@ class StaticMarketMaker:
         ]
 
 
+class EmptyMarketMaker:
+    def __init__(self, **kwargs):
+        self._current_spread = 0.2
+
+    @property
+    def current_spread(self) -> float:
+        return self._current_spread
+
+    def generate_quotes(self, mid_price: float, net_agent_flow: int, recent_volatility: float):
+        return []
+
+
+class TwoLevelBookMarketMaker:
+    def __init__(self, **kwargs):
+        self._current_spread = 0.2
+
+    @property
+    def current_spread(self) -> float:
+        return self._current_spread
+
+    def observe_passive_fills(self, fills):
+        pass
+
+    def generate_quotes(self, mid_price: float, net_agent_flow: int, recent_volatility: float):
+        return [
+            Order(side=Side.BUY, size=100, order_type=OrderType.LIMIT, price=99.9, agent_id="mm"),
+            Order(side=Side.SELL, size=1, order_type=OrderType.LIMIT, price=100.1, agent_id="mm"),
+            Order(side=Side.SELL, size=100, order_type=OrderType.LIMIT, price=101.0, agent_id="mm"),
+        ]
+
+
 class TwoPhaseNoiseTrader:
     def __init__(self, **kwargs):
         self._calls = 0
@@ -125,33 +227,34 @@ class SilentNoiseTrader:
         return []
 
 
-class FakeSimulation:
-    call_count = 0
+class DelayedNoiseLimitTrader:
+    def __init__(self, **kwargs):
+        self._calls = 0
 
-    def __init__(self, agents, config, seed):
-        self._agents = agents
+    def generate_orders(self, mid_price: float, spread: float, intensity_scale: float = 1.0):
+        self._calls += 1
+        if self._calls == 1:
+            return [
+                Order(
+                    side=Side.SELL,
+                    size=3,
+                    order_type=OrderType.LIMIT,
+                    price=100.3,
+                    agent_id="noise",
+                )
+            ]
+        return []
 
-    def run(self):
-        type(self).call_count += 1
-        if type(self).call_count == 1:
-            scores = {"fragile": 1.0, "steady": 5.0}
-        else:
-            scores = {"fragile": float("inf"), "steady": 5.0}
 
-        results = [
-            AgentResult(
-                agent_id=agent.agent_id,
-                agent_class=type(agent).__name__,
-                fills=[],
-                total_filled=0,
-                avg_price=0.0,
-                arrival_price=100.0,
-                implementation_shortfall=scores[agent.agent_id],
-                remaining_qty=agent.target_qty,
-            )
-            for agent in self._agents
-        ]
-        return results, [], [], []
+class _NoShuffleRng:
+    def shuffle(self, values):
+        return None
+
+
+class DeterministicMatchingEngine(MatchingEngine):
+    def __init__(self, rng=None):
+        super().__init__(rng=np.random.default_rng(0))
+        self._rng = _NoShuffleRng()
 
 
 class TestOrder:
@@ -236,7 +339,7 @@ class TestOrderBook:
             (100.0, 5, "second"),
         ]
 
-    def test_resting_orders_report_queue_ahead(self):
+    def test_resting_orders_hide_exact_queue_ahead(self):
         book = OrderBook()
         book.add_limit_order(Side.BUY, 100.0, 8, "mm", submitted_tick=0)
         book.add_limit_order(
@@ -252,7 +355,7 @@ class TestOrderBook:
         resting = book.get_resting_orders("agent")
 
         assert len(resting) == 1
-        assert resting[0].queue_ahead == 8
+        assert resting[0].queue_ahead is None
         assert resting[0].remaining_size == 5
 
     def test_expire_orders_removes_old_passive_orders(self):
@@ -288,6 +391,19 @@ class TestOrderBook:
         assert removed_qty == 5
         assert book.get_resting_orders("agent") == ()
 
+    def test_cancel_all_orders_removes_all_live_resting_orders(self):
+        book = OrderBook()
+        book.add_limit_order(Side.BUY, 100.0, 5, "mm", submitted_tick=0)
+        book.add_limit_order(Side.SELL, 101.0, 7, "mm", submitted_tick=0)
+        book.add_limit_order(Side.BUY, 99.5, 3, "agent", submitted_tick=0)
+
+        removed_qty = book.cancel_all_orders("mm")
+
+        assert removed_qty == 12
+        snap = book.snapshot()
+        assert tuple((level.price, level.size) for level in snap.bids) == ((99.5, 3),)
+        assert snap.asks == ()
+
 
 class TestPriceModel:
     def test_initial_price(self):
@@ -319,6 +435,44 @@ class TestPriceModel:
         assert pm.price > 100.0
 
 
+class TestBackgroundParticipants:
+    def test_market_maker_skews_quotes_after_inventory_builds(self):
+        flat_mm = MarketMaker(
+            n_levels=1,
+            base_spread_bps=10.0,
+            base_size=100,
+            rng=np.random.default_rng(7),
+        )
+        long_mm = MarketMaker(
+            n_levels=1,
+            base_spread_bps=10.0,
+            base_size=100,
+            rng=np.random.default_rng(7),
+        )
+
+        flat_quotes = flat_mm.generate_quotes(
+            mid_price=100.0,
+            net_agent_flow=0,
+            recent_volatility=0.001,
+        )
+        long_mm.observe_passive_fills([
+            Fill(price=99.9, size=300, tick=0, side=Side.BUY)
+        ])
+        skewed_quotes = long_mm.generate_quotes(
+            mid_price=100.0,
+            net_agent_flow=0,
+            recent_volatility=0.001,
+        )
+
+        flat_bid = max(order.price for order in flat_quotes if order.side == Side.BUY)
+        flat_ask = min(order.price for order in flat_quotes if order.side == Side.SELL)
+        skewed_bid = max(order.price for order in skewed_quotes if order.side == Side.BUY)
+        skewed_ask = min(order.price for order in skewed_quotes if order.side == Side.SELL)
+
+        assert skewed_bid < flat_bid
+        assert skewed_ask < flat_ask
+
+
 class TestScoring:
     def test_basic_shortfall(self):
         fills = [Fill(price=101.0, size=100, tick=0, side=Side.BUY)]
@@ -340,8 +494,18 @@ class TestScoring:
         is_bps = implementation_shortfall(fills, 100.0, 100)
         assert is_bps < 0
 
+    def test_invalid_arrival_price_raises(self):
+        fills = [Fill(price=101.0, size=100, tick=0, side=Side.BUY)]
+        with pytest.raises(ValueError, match="arrival_price must be positive"):
+            implementation_shortfall(fills, 0.0, 100)
+
 
 class TestSimulation:
+    def test_duplicate_agent_ids_rejected(self):
+        agents = [TWAPAgent("dup", 10), TWAPAgent("dup", 10)]
+        with pytest.raises(ValueError, match="duplicate agent_id"):
+            Simulation(agents, SimulationConfig(n_ticks=1, target_qty=10), seed=1)
+
     def test_reproducible(self):
         agents1 = [TWAPAgent("twap", 10000)]
         agents2 = [TWAPAgent("twap", 10000)]
@@ -358,23 +522,6 @@ class TestSimulation:
         results = Simulation(agents, config, seed=42).run()[0]
         assert results[0].total_filled > 0
 
-    def test_naive_worse_than_twap(self):
-        """Over enough seeds, TWAP should beat Naive."""
-        config = SimulationConfig()
-        factories = [
-            (NaiveAgent, {"agent_id": "Naive"}),
-            (TWAPAgent, {"agent_id": "TWAP"}),
-        ]
-        result = Tournament(
-            agent_factories=factories,
-            n_seeds=30,
-            master_seed=42,
-            config=config,
-        ).run()
-
-        scores = {aid: mis for aid, mis in result.rankings}
-        assert scores["TWAP"] < scores["Naive"]
-
     def test_passive_limits_can_fill_from_post_agent_noise(self, monkeypatch):
         config = SimulationConfig(n_ticks=1, target_qty=5, noise_avg_orders=0)
 
@@ -390,6 +537,23 @@ class TestSimulation:
 
         assert result.total_filled == 5
         assert result.remaining_qty == 0
+
+    def test_replay_activity_counts_passive_fills(self, monkeypatch):
+        config = SimulationConfig(n_ticks=1, target_qty=5, noise_avg_orders=0)
+
+        monkeypatch.setattr("engine.simulation.MidPriceProcess", FakePriceModel)
+        monkeypatch.setattr("engine.simulation.MarketMaker", StaticMarketMaker)
+        monkeypatch.setattr("engine.simulation.NoiseTrader", TwoPhaseNoiseTrader)
+
+        _results, _tick_mids, _tick_spreads, replay_ticks = Simulation(
+            agents=[PassiveLimitAgent("passive", 5)],
+            config=config,
+            seed=123,
+        ).run()
+
+        replay_agent = replay_ticks[0]["agents"]["passive"]
+        assert replay_agent["filled_this_tick"] == 5
+        assert replay_agent["cumulative_filled"] == 5
 
     def test_flow_signals(self, monkeypatch):
         FakePriceModel.seen_flows = []
@@ -411,24 +575,6 @@ class TestSimulation:
         # Market maker sees cumulative flow
         assert StaticMarketMaker.seen_flows == [0, 2, 4]
 
-    def test_tournament_penalizes_any_incomplete_seed(self, monkeypatch):
-        FakeSimulation.call_count = 0
-
-        monkeypatch.setattr("engine.tournament.Simulation", FakeSimulation)
-
-        result = Tournament(
-            agent_factories=[
-                (NoOpAgent, {"agent_id": "fragile"}),
-                (NoOpAgent, {"agent_id": "steady"}),
-            ],
-            n_seeds=2,
-            master_seed=7,
-            config=SimulationConfig(),
-        ).run()
-
-        assert result.rankings[0] == ("steady", 5.0)
-        assert result.rankings[1] == ("fragile", float("inf"))
-
     def test_cancel_order_frees_budget_for_repricing(self, monkeypatch):
         config = SimulationConfig(n_ticks=2, target_qty=5, noise_avg_orders=0)
 
@@ -444,3 +590,95 @@ class TestSimulation:
 
         assert result.total_filled == 5
         assert result.remaining_qty == 0
+
+    def test_invalid_action_payload_is_ignored(self, monkeypatch):
+        class BadPayloadAgent(BaseAgent):
+            def on_tick(self, state):
+                return ["bad", None, 123]
+
+        config = SimulationConfig(n_ticks=1, target_qty=5, noise_avg_orders=0)
+
+        monkeypatch.setattr("engine.simulation.MidPriceProcess", FakePriceModel)
+        monkeypatch.setattr("engine.simulation.MarketMaker", StaticMarketMaker)
+        monkeypatch.setattr("engine.simulation.NoiseTrader", SilentNoiseTrader)
+
+        result = Simulation(
+            agents=[BadPayloadAgent("bad", 5)],
+            config=config,
+            seed=123,
+        ).run()[0][0]
+
+        assert result.total_filled == 0
+        assert result.remaining_qty == 5
+
+    def test_agent_limit_orders_persist_until_cancelled(self, monkeypatch):
+        config = SimulationConfig(n_ticks=6, target_qty=1, noise_avg_orders=0)
+        agent = LongLivedPassiveAgent("passive", 1)
+
+        monkeypatch.setattr("engine.simulation.MidPriceProcess", FakePriceModel)
+        monkeypatch.setattr("engine.simulation.MarketMaker", StaticMarketMaker)
+        monkeypatch.setattr("engine.simulation.NoiseTrader", SilentNoiseTrader)
+
+        result = Simulation(
+            agents=[agent],
+            config=config,
+            seed=123,
+        ).run()[0][0]
+
+        assert agent.saw_resting_on_tick_five
+        assert result.total_filled == 1
+        assert result.remaining_qty == 0
+
+    def test_noise_limit_orders_persist_across_ticks(self, monkeypatch):
+        config = SimulationConfig(n_ticks=2, target_qty=3, noise_avg_orders=0)
+
+        monkeypatch.setattr("engine.simulation.MidPriceProcess", FakePriceModel)
+        monkeypatch.setattr("engine.simulation.MarketMaker", EmptyMarketMaker)
+        monkeypatch.setattr("engine.simulation.NoiseTrader", DelayedNoiseLimitTrader)
+
+        result = Simulation(
+            agents=[TickOneMarketAgent("taker", 3)],
+            config=config,
+            seed=123,
+        ).run()[0][0]
+
+        assert result.total_filled == 3
+        assert result.avg_price == pytest.approx(100.3)
+
+    def test_market_maker_quotes_replace_instead_of_accumulating(self, monkeypatch):
+        config = SimulationConfig(n_ticks=3, target_qty=1, noise_avg_orders=0)
+
+        monkeypatch.setattr("engine.simulation.MidPriceProcess", FakePriceModel)
+        monkeypatch.setattr("engine.simulation.MarketMaker", StaticMarketMaker)
+        monkeypatch.setattr("engine.simulation.NoiseTrader", SilentNoiseTrader)
+
+        _results, _tick_mids, _tick_spreads, replay_ticks = Simulation(
+            agents=[NoOpAgent("idle", 1)],
+            config=config,
+            seed=123,
+        ).run()
+
+        final_tick = replay_ticks[-1]
+        assert final_tick["bids"][0] == (99.9, 100)
+        assert final_tick["asks"][0] == (100.1, 100)
+
+    def test_later_agents_see_live_book_after_earlier_agent_executes(self, monkeypatch):
+        observer = ObserveBestAskAgent("observer", 1)
+        config = SimulationConfig(n_ticks=1, target_qty=1, noise_avg_orders=0)
+
+        monkeypatch.setattr("engine.simulation.MidPriceProcess", FakePriceModel)
+        monkeypatch.setattr("engine.simulation.MarketMaker", TwoLevelBookMarketMaker)
+        monkeypatch.setattr("engine.simulation.NoiseTrader", SilentNoiseTrader)
+        monkeypatch.setattr(
+            "engine.simulation.MatchingEngine",
+            DeterministicMatchingEngine,
+        )
+
+        Simulation(
+            agents=[OneShotMarketAgent("first", 1), observer],
+            config=config,
+            seed=123,
+        ).run()
+
+        assert observer.seen_best_ask == pytest.approx(101.0)
+

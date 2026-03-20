@@ -1,10 +1,11 @@
 from __future__ import annotations
 
 import math
+from collections import deque
 
 import numpy as np
 
-from engine.types import Order, OrderType, Side
+from engine.types import Fill, Order, OrderType, Side
 
 
 class MarketMaker:
@@ -32,10 +33,29 @@ class MarketMaker:
         self._flow_sensitivity = flow_sensitivity
         self._rng = rng or np.random.default_rng()
         self._current_spread: float = 0.0
+        self._inventory = 0
+        self._recent_fill_imbalance: deque[int] = deque(maxlen=20)
 
     @property
     def current_spread(self) -> float:
         return self._current_spread
+
+    @property
+    def inventory(self) -> int:
+        return self._inventory
+
+    def observe_passive_fills(self, fills: list[Fill]) -> None:
+        """Update inventory and recent fill pressure from passive fills."""
+        net_fill = 0
+        for fill in fills:
+            if fill.side == Side.BUY:
+                net_fill += fill.size
+            else:
+                net_fill -= fill.size
+
+        if net_fill != 0:
+            self._inventory += net_fill
+        self._recent_fill_imbalance.append(net_fill)
 
     def generate_quotes(
         self,
@@ -44,23 +64,28 @@ class MarketMaker:
         recent_volatility: float,
     ) -> list[Order]:
         """Generate limit orders for both sides of the book."""
+        center_price = self._compute_center_price(mid_price)
         half_spread = self._compute_half_spread(
-            mid_price, net_agent_flow, recent_volatility
+            mid_price,
+            net_agent_flow,
+            recent_volatility,
         )
         self._current_spread = half_spread * 2
 
         orders: list[Order] = []
+        size_skew = self._inventory_pressure()
         for i in range(self._n_levels):
             level_offset = i * (self._level_spacing_bps / 10_000) * mid_price
-            level_size = self._compute_level_size(i)
+            bid_size = self._compute_level_size(i, side=Side.BUY, skew=size_skew)
+            ask_size = self._compute_level_size(i, side=Side.SELL, skew=size_skew)
 
             # Bid side
-            bid_price = round(mid_price - half_spread - level_offset, 4)
+            bid_price = round(center_price - half_spread - level_offset, 4)
             if bid_price > 0:
                 orders.append(
                     Order(
                         side=Side.BUY,
-                        size=level_size,
+                        size=bid_size,
                         order_type=OrderType.LIMIT,
                         price=bid_price,
                         agent_id="mm",
@@ -68,11 +93,11 @@ class MarketMaker:
                 )
 
             # Ask side
-            ask_price = round(mid_price + half_spread + level_offset, 4)
+            ask_price = round(max(0.01, center_price + half_spread + level_offset), 4)
             orders.append(
                 Order(
                     side=Side.SELL,
-                    size=level_size,
+                    size=ask_size,
                     order_type=OrderType.LIMIT,
                     price=ask_price,
                     agent_id="mm",
@@ -103,14 +128,39 @@ class MarketMaker:
             * mid_price
         )
 
+        pressure_component = abs(self._inventory_pressure()) * base * 0.5
+
         # Small random jitter
         jitter = self._rng.uniform(-0.05, 0.05) * base
 
-        return max(base + vol_component + flow_component + jitter, base * 0.5)
+        return max(
+            base + vol_component + flow_component + pressure_component + jitter,
+            base * 0.5,
+        )
 
-    def _compute_level_size(self, level_idx: int) -> int:
+    def _compute_center_price(self, mid_price: float) -> float:
+        """Skew the quote center away from inventory and recent fill pressure."""
+        pressure = self._inventory_pressure()
+        center_shift = pressure * (self._base_spread_bps / 10_000) * mid_price
+        return max(0.01, mid_price - center_shift)
+
+    def _inventory_pressure(self) -> float:
+        scale = max(self._base_size * self._n_levels, 1)
+        recent = sum(self._recent_fill_imbalance)
+        raw_pressure = (self._inventory + 0.5 * recent) / scale
+        return float(np.clip(raw_pressure, -1.5, 1.5))
+
+    def _compute_level_size(
+        self,
+        level_idx: int,
+        *,
+        side: Side,
+        skew: float,
+    ) -> int:
         """Compute size at a given depth level (thinner near top, thicker deeper)."""
         raw = self._base_size * (self._depth_growth**level_idx)
+        side_skew = -skew if side == Side.BUY else skew
+        raw *= max(0.35, 1.0 + side_skew * 0.5)
         # Add some noise
         noise = self._rng.uniform(0.8, 1.2)
         return max(1, int(raw * noise))
