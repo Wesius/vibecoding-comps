@@ -96,6 +96,8 @@ def run_tournament(config: ServerConfig) -> dict:
     # Run tournament
     sim_config = SimulationConfig(
         n_ticks=config.ticks_per_sim,
+        noise_sell_cap_low=0.6,
+        noise_sell_cap_high=1.4,
     )
 
     master_ss = np.random.SeedSequence(42)

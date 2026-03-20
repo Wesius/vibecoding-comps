@@ -82,6 +82,29 @@ def _validate_agent_actions(
     return cancel_ids, validated
 
 
+def _cap_noise_sells(
+    orders: list[Order], budget: int | None,
+) -> tuple[list[Order], int | None]:
+    """Filter noise sell orders to stay within the sell budget.
+
+    Sell orders are clipped/dropped once the budget is exhausted.
+    Buy orders pass through unchanged. Returns (filtered_orders, remaining_budget).
+    """
+    if budget is None:
+        return orders, None
+    result: list[Order] = []
+    for order in orders:
+        if order.side != Side.SELL:
+            result.append(order)
+            continue
+        if budget <= 0:
+            continue
+        size = min(order.size, budget)
+        result.append(dataclasses.replace(order, size=size))
+        budget -= size
+    return result, budget
+
+
 def _compute_avg_price(fills: list[Fill]) -> float:
     if not fills:
         return 0.0
@@ -148,6 +171,13 @@ class Simulation:
         matching = MatchingEngine(rng=shuffle_rng)
         book = OrderBook()
 
+        # Noise sell budget: cap total NPC sell volume per seed
+        if cfg.noise_sell_cap_low is not None and cfg.noise_sell_cap_high is not None:
+            cap_frac = shuffle_rng.uniform(cfg.noise_sell_cap_low, cfg.noise_sell_cap_high)
+            noise_sell_budget = int(cap_frac * cfg.target_qty * len(self._agents))
+        else:
+            noise_sell_budget = None  # unlimited
+
         arrival_price = price_model.price
 
         # Per-agent state
@@ -196,6 +226,9 @@ class Simulation:
                 mid_price=mid,
                 spread=market_maker.current_spread,
                 intensity_scale=0.5,
+            )
+            noise_orders, noise_sell_budget = _cap_noise_sells(
+                noise_orders, noise_sell_budget,
             )
 
             # [C] REFRESH MARKET MAKER QUOTES AND EXECUTE NOISE
@@ -328,6 +361,9 @@ class Simulation:
                 mid_price=mid,
                 spread=market_maker.current_spread,
                 intensity_scale=0.5,
+            )
+            post_noise_orders, noise_sell_budget = _cap_noise_sells(
+                post_noise_orders, noise_sell_budget,
             )
             post_noise_tape, post_background_fills = (
                 matching.execute_background_orders(

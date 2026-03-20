@@ -148,6 +148,10 @@ class SimulationConfig:
     noise_market_prob: float = 0.7
     noise_mean_size: int = 50
     noise_size_std: float = 0.5
+    # Noise sell budget as fraction of total agent demand (target_qty * n_agents).
+    # Drawn uniformly per seed from [low, high]. None disables the cap.
+    noise_sell_cap_low: float | None = None
+    noise_sell_cap_high: float | None = None
     # Optional passive order lifetime cap. None means rest until cancelled.
     agent_order_ttl_ticks: int | None = None
     # Noise trader passive orders rest for a bounded time to preserve
