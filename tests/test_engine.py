@@ -482,11 +482,12 @@ class TestScoring:
     def test_no_fills(self):
         assert implementation_shortfall([], 100.0, 100) == float("inf")
 
-    def test_unfilled_penalty(self):
+    def test_partial_fill_same_avg(self):
+        """Scoring only considers actual fills; terminal sweep is handled by the simulation."""
         fills = [Fill(price=101.0, size=50, tick=0, side=Side.BUY)]
         is_full = implementation_shortfall(fills, 100.0, 50)
         is_partial = implementation_shortfall(fills, 100.0, 100)
-        assert is_partial > is_full  # penalty for unfilled
+        assert is_partial == is_full  # same avg price, no in-scorer penalty
 
     def test_negative_shortfall(self):
         # Price moved in our favor
@@ -608,8 +609,9 @@ class TestSimulation:
             seed=123,
         ).run()[0][0]
 
-        assert result.total_filled == 0
-        assert result.remaining_qty == 5
+        # Agent submitted no valid orders, but terminal sweep fills via market order
+        assert result.total_filled == 5
+        assert result.remaining_qty == 0
 
     def test_agent_limit_orders_persist_until_cancelled(self, monkeypatch):
         config = SimulationConfig(n_ticks=6, target_qty=1, noise_avg_orders=0)

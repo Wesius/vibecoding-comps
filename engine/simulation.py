@@ -383,6 +383,37 @@ class Simulation:
                     _compute_avg_price(fills) if fills else arrival_price
                 )
 
+        # Terminal sweep: market-order any unfilled quantity against the book
+        final_tick = cfg.n_ticks
+        for agent in self._agents:
+            aid = agent.agent_id
+            total_filled = sum(f.size for f in agent_fills[aid])
+            unfilled = cfg.target_qty - total_filled
+            if unfilled <= 0:
+                continue
+
+            # Cancel all resting orders first to free up the book
+            book.cancel_all_orders(aid)
+
+            # Sweep whatever the book has
+            sweep_fills = book.match_market_order(Side.BUY, unfilled)
+            worst_price = arrival_price
+            for price, size, _resting_id, _order_id in sweep_fills:
+                agent_fills[aid].append(Fill(
+                    price=price, size=size, tick=final_tick, side=Side.BUY,
+                ))
+                worst_price = max(worst_price, price)
+
+            swept = sum(size for _, size, _, _ in sweep_fills)
+            still_unfilled = unfilled - swept
+            if still_unfilled > 0:
+                # Book exhausted — fill remainder at worst sweep price + 50bps
+                penalty_price = worst_price * 1.005
+                agent_fills[aid].append(Fill(
+                    price=penalty_price, size=still_unfilled,
+                    tick=final_tick, side=Side.BUY,
+                ))
+
         # Compute final results
         results: list[AgentResult] = []
         for agent in self._agents:
