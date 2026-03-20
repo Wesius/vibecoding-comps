@@ -373,11 +373,7 @@ function drawPriceChart(currentTick) {
 
   // Legend
   const legend = document.getElementById('priceLegend');
-  let lhtml = '<div class="legend-item"><div class="legend-dot" style="background:#448AFF"></div>Mid Price</div>';
-  names.forEach((name, i) => {
-    lhtml += `<div class="legend-item"><div class="legend-dot" style="background:${COLORS[i % COLORS.length]}"></div>${name} fills</div>`;
-  });
-  legend.innerHTML = lhtml;
+  legend.innerHTML = '<div class="legend-item"><div class="legend-dot" style="background:#448AFF"></div>Mid Price</div>';
 }
 
 function drawActivityChart(currentTick) {
