@@ -223,6 +223,80 @@
     margin-top: 0.4rem;
   }
 
+  /* rules */
+  .rules {
+    margin-top: 2rem;
+    border: 1px solid var(--border);
+    background: var(--surface);
+    padding: 1.2rem 1.5rem;
+  }
+
+  .rules h2 {
+    font-family: 'Space Mono', monospace;
+    font-size: 0.75rem;
+    font-weight: 700;
+    color: var(--amber);
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    margin-bottom: 1rem;
+  }
+
+  .rules p, .rules li {
+    font-size: 0.7rem;
+    line-height: 1.7;
+    color: var(--text);
+  }
+
+  .rules p {
+    margin-bottom: 0.8rem;
+  }
+
+  .rules .hl {
+    color: var(--text-bright);
+  }
+
+  .rules .green {
+    color: var(--green);
+  }
+
+  .rules code {
+    background: var(--bg);
+    padding: 0.15rem 0.4rem;
+    font-size: 0.65rem;
+    color: var(--amber);
+    border: 1px solid var(--border);
+  }
+
+  .rules ol {
+    padding-left: 1.2rem;
+    margin-bottom: 0.8rem;
+  }
+
+  .rules li {
+    margin-bottom: 0.3rem;
+  }
+
+  .rules-columns {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 1.5rem;
+    margin-top: 1rem;
+  }
+
+  .rules-columns h3 {
+    font-size: 0.65rem;
+    font-weight: 500;
+    color: var(--text-dim);
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    margin-bottom: 0.5rem;
+  }
+
+  @media (max-width: 600px) {
+    .rules-columns { grid-template-columns: 1fr; }
+    .rules { padding: 1rem; }
+  }
+
   /* footer */
   .footer {
     margin-top: 1.5rem;
@@ -277,6 +351,34 @@
     </div>
   </div>
 
+  <div class="rules">
+    <h2>How It Works</h2>
+    <p>You have <span class="hl">10,000 units</span> to buy over <span class="hl">500 ticks</span>. A synthetic market provides liquidity through an order book. Every time you buy, you push the price up. Other players' agents are buying simultaneously, competing for the same liquidity.</p>
+    <p>Your score is how much extra you paid vs the starting price, in basis points (1 bps = 0.01%). <span class="green">Lower is better.</span> Negative means you beat the starting price.</p>
+    <p>Example: the starting price is $100. A score of <span class="hl">50 bps</span> means your average fill was <span class="hl">$100.50</span> &mdash; on 10,000 units that's $5,000 in extra cost. A score of <span class="green">-10 bps</span> means you averaged <span class="green">$99.90</span>, beating the market.</p>
+    <p><span class="hl">Mean</span> = your average score across all tournaments. <span class="hl">Best</span> = your best single tournament. Each tournament runs 50 random seeds and averages.</p>
+
+    <div class="rules-columns">
+      <div>
+        <h3>Getting Started</h3>
+        <ol>
+          <li>Clone: <code>git clone https://github.com/Wesius/vibecoding-comps.git</code></li>
+          <li>Install: <code>uv sync</code></li>
+          <li>Drop your <code>.txt</code> credentials file in the repo root, rename to <code>.env</code></li>
+          <li>Edit <code>agent/agent.py</code></li>
+          <li>Test: <code>uv run python cli.py test</code></li>
+          <li>Submit: <code>uv run python cli.py submit</code></li>
+        </ol>
+      </div>
+      <div>
+        <h3>Order Types</h3>
+        <p><span class="hl">Market orders</span> fill immediately but you pay the spread and walk the book if it's thin.</p>
+        <p><span class="hl">Limit orders</span> are cheaper if they fill, but unfilled orders are cancelled at end of tick.</p>
+        <p>Your agent sees the full order book, trade tape, and your own fill history every tick.</p>
+      </div>
+    </div>
+  </div>
+
   <div class="footer">
     <div>vibecoding-comps</div>
     <div id="player-count"></div>
@@ -323,8 +425,9 @@ function render(data) {
     <thead><tr>
       <th>#</th>
       <th>Player</th>
-      <th>Mean IS (bps)</th>
-      <th>Best IS</th>
+      <th>Score (bps)</th>
+      <th>Avg Fill</th>
+      <th>Best</th>
       <th>Runs</th>
     </tr></thead><tbody>`;
 
@@ -332,10 +435,12 @@ function render(data) {
     const cls = s.rank <= 3 ? `rank-${s.rank}` : '';
     const mean = s.mean_is === Infinity ? '—' : s.mean_is.toFixed(2);
     const best = s.best_is === Infinity ? '—' : s.best_is.toFixed(2);
+    const avgFill = s.mean_is === Infinity ? '—' : '$' + (100 * (1 + s.mean_is / 10000)).toFixed(4);
     html += `<tr class="${cls}">
       <td class="rank">${s.rank}</td>
       <td class="name">${s.name}</td>
       <td class="is-val">${mean}</td>
+      <td class="best-val">${avgFill}</td>
       <td class="best-val">${best}</td>
       <td class="tournaments-val">${s.tournaments_played}</td>
     </tr>`;
