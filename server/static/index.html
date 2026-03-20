@@ -426,8 +426,7 @@ function render(data) {
       <th>#</th>
       <th>Player</th>
       <th>Score (bps)</th>
-      <th>Avg Fill</th>
-      <th>Runs</th>
+      <th>Avg Fill Price</th>
     </tr></thead><tbody>`;
 
   for (const s of standings) {
@@ -439,7 +438,6 @@ function render(data) {
       <td class="name">${s.name}</td>
       <td class="is-val">${mean}</td>
       <td class="best-val">${avgFill}</td>
-      <td class="tournaments-val">${s.tournaments_played}</td>
     </tr>`;
   }
 

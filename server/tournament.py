@@ -137,45 +137,21 @@ def update_leaderboard(config: ServerConfig, tournament_result: dict) -> None:
     """Update the leaderboard JSON file with new tournament results."""
     leaderboard_path = config.leaderboard_path
 
-    # Load existing leaderboard
-    if leaderboard_path.exists():
-        data = json.loads(leaderboard_path.read_text())
-    else:
-        data = {"tournaments": [], "standings": []}
-
-    # Append tournament
-    data["tournaments"].append(tournament_result)
-    data["updated_at"] = datetime.now(timezone.utc).isoformat()
-
-    # Recompute standings from all tournaments
-    all_scores: dict[str, list[float]] = {}
-    all_tournaments: dict[str, int] = {}
-
-    for t in data["tournaments"]:
-        for entry in t["results"]:
-            name = entry["name"]
-            if name not in all_scores:
-                all_scores[name] = []
-                all_tournaments[name] = 0
-            all_scores[name].append(entry["mean_is"])
-            all_tournaments[name] += 1
-
+    # Leaderboard just shows the most recent tournament
     standings: list[dict] = []
-    for name, scores in all_scores.items():
-        finite = [s for s in scores if s != float("inf")]
-        mean_is = float(np.mean(finite)) if finite else float("inf")
+    for entry in tournament_result["results"]:
         standings.append({
-            "name": name,
-            "mean_is": round(mean_is, 2),
-            "best_is": round(min(finite), 2) if finite else float("inf"),
-            "tournaments_played": all_tournaments[name],
+            "name": entry["name"],
+            "mean_is": entry["mean_is"],
+            "seeds_completed": entry.get("seeds_completed", 0),
+            "rank": entry["rank"],
         })
 
-    standings.sort(key=lambda x: x["mean_is"])
-    for i, entry in enumerate(standings, 1):
-        entry["rank"] = i
-
-    data["standings"] = standings
+    data = {
+        "updated_at": datetime.now(timezone.utc).isoformat(),
+        "tournament_id": tournament_result["tournament_id"],
+        "standings": standings,
+    }
 
     # Atomic write
     tmp_path = leaderboard_path.with_suffix(".tmp")
