@@ -427,21 +427,18 @@ function render(data) {
       <th>Player</th>
       <th>Score (bps)</th>
       <th>Avg Fill</th>
-      <th>Best</th>
       <th>Runs</th>
     </tr></thead><tbody>`;
 
   for (const s of standings) {
     const cls = s.rank <= 3 ? `rank-${s.rank}` : '';
     const mean = s.mean_is === Infinity ? '—' : s.mean_is.toFixed(2);
-    const best = s.best_is === Infinity ? '—' : s.best_is.toFixed(2);
     const avgFill = s.mean_is === Infinity ? '—' : '$' + (100 * (1 + s.mean_is / 10000)).toFixed(4);
     html += `<tr class="${cls}">
       <td class="rank">${s.rank}</td>
       <td class="name">${s.name}</td>
       <td class="is-val">${mean}</td>
       <td class="best-val">${avgFill}</td>
-      <td class="best-val">${best}</td>
       <td class="tournaments-val">${s.tournaments_played}</td>
     </tr>`;
   }
