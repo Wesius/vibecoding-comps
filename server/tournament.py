@@ -74,8 +74,19 @@ def run_tournament(config: ServerConfig) -> dict:
     master_ss = np.random.SeedSequence(42)
     sim_seeds = master_ss.spawn(config.seeds_per_tournament)
 
+    n_ticks = sim_config.n_ticks
     agent_scores: dict[str, list[float]] = {
         kwargs["agent_id"]: [] for _, kwargs in agent_factories
+    }
+    # Accumulate per-tick data across seeds for averaging
+    agent_fill_pct_sum: dict[str, np.ndarray] = {
+        kwargs["agent_id"]: np.zeros(n_ticks) for _, kwargs in agent_factories
+    }
+    agent_price_sum: dict[str, np.ndarray] = {
+        kwargs["agent_id"]: np.zeros(n_ticks) for _, kwargs in agent_factories
+    }
+    agent_seed_count: dict[str, int] = {
+        kwargs["agent_id"]: 0 for _, kwargs in agent_factories
     }
 
     for seed_seq in sim_seeds:
@@ -99,16 +110,33 @@ def run_tournament(config: ServerConfig) -> dict:
 
         for result in results:
             agent_scores[result.agent_id].append(result.implementation_shortfall)
+            if result.cumulative_fill_pct is not None:
+                agent_fill_pct_sum[result.agent_id] += np.array(result.cumulative_fill_pct)
+                agent_price_sum[result.agent_id] += np.array(result.running_avg_price)
+                agent_seed_count[result.agent_id] += 1
 
     # Compute rankings
     rankings: list[dict] = []
     for agent_id, scores in agent_scores.items():
         finite = [s for s in scores if s != float("inf")]
         mean_is = float(np.mean(finite)) if finite else float("inf")
+        count = agent_seed_count[agent_id]
+        # Downsample to 50 points for the frontend
+        if count > 0:
+            avg_pct = agent_fill_pct_sum[agent_id] / count
+            avg_price = agent_price_sum[agent_id] / count
+            step = max(1, n_ticks // 50)
+            fill_curve = [round(float(avg_pct[i]), 4) for i in range(0, n_ticks, step)]
+            price_curve = [round(float(avg_price[i]), 4) for i in range(0, n_ticks, step)]
+        else:
+            fill_curve = []
+            price_curve = []
         rankings.append({
             "name": agent_id,
             "mean_is": round(mean_is, 2),
             "seeds_completed": len(finite),
+            "fill_curve": fill_curve,
+            "price_curve": price_curve,
         })
 
     rankings.sort(key=lambda x: x["mean_is"])
@@ -140,12 +168,17 @@ def update_leaderboard(config: ServerConfig, tournament_result: dict) -> None:
     # Leaderboard just shows the most recent tournament
     standings: list[dict] = []
     for entry in tournament_result["results"]:
-        standings.append({
+        s = {
             "name": entry["name"],
             "mean_is": entry["mean_is"],
             "seeds_completed": entry.get("seeds_completed", 0),
             "rank": entry["rank"],
-        })
+        }
+        if "fill_curve" in entry:
+            s["fill_curve"] = entry["fill_curve"]
+        if "price_curve" in entry:
+            s["price_curve"] = entry["price_curve"]
+        standings.append(s)
 
     data = {
         "updated_at": datetime.now(timezone.utc).isoformat(),

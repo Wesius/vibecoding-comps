@@ -135,6 +135,13 @@ class Simulation:
         agent_fills: dict[str, list[Fill]] = {
             a.agent_id: [] for a in self._agents
         }
+        # Per-tick tracking for charts
+        tick_cumulative_pct: dict[str, list[float]] = {
+            a.agent_id: [] for a in self._agents
+        }
+        tick_avg_price: dict[str, list[float]] = {
+            a.agent_id: [] for a in self._agents
+        }
         tape: list[TradeTapeEntry] = []
         prev_tick_agent_flow = 0
 
@@ -274,6 +281,16 @@ class Simulation:
                 for fill in fills
             )
 
+            # Track per-tick stats for charts
+            for agent in self._agents:
+                aid = agent.agent_id
+                fills = agent_fills[aid]
+                total = sum(f.size for f in fills)
+                tick_cumulative_pct[aid].append(total / cfg.target_qty)
+                tick_avg_price[aid].append(
+                    _compute_avg_price(fills) if fills else arrival_price
+                )
+
             # [G] CLEANUP
             book.clear_transient()
 
@@ -295,6 +312,8 @@ class Simulation:
                 arrival_price=arrival_price,
                 implementation_shortfall=is_bps,
                 remaining_qty=cfg.target_qty - total_filled,
+                cumulative_fill_pct=tick_cumulative_pct[agent.agent_id],
+                running_avg_price=tick_avg_price[agent.agent_id],
             ))
 
         return results

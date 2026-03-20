@@ -120,6 +120,9 @@ class AgentResult:
     arrival_price: float
     implementation_shortfall: float  # basis points
     remaining_qty: int
+    # Per-tick tracking (length = n_ticks)
+    cumulative_fill_pct: list[float] | None = None  # 0.0 to 1.0
+    running_avg_price: list[float] | None = None
 
 
 @dataclass

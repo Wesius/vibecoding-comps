@@ -223,6 +223,60 @@
     margin-top: 0.4rem;
   }
 
+  /* charts */
+  .charts {
+    margin-top: 1.5rem;
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 1rem;
+  }
+
+  .chart-box {
+    border: 1px solid var(--border);
+    background: var(--surface);
+    padding: 1rem;
+  }
+
+  .chart-box h3 {
+    font-size: 0.6rem;
+    font-weight: 500;
+    letter-spacing: 0.1em;
+    text-transform: uppercase;
+    color: var(--text-dim);
+    margin-bottom: 0.75rem;
+  }
+
+  .chart-box canvas {
+    width: 100%;
+    height: 180px;
+    display: block;
+  }
+
+  .chart-legend {
+    margin-top: 0.6rem;
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.8rem;
+    font-size: 0.6rem;
+  }
+
+  .legend-item {
+    display: flex;
+    align-items: center;
+    gap: 0.3rem;
+    color: var(--text-dim);
+  }
+
+  .legend-dot {
+    width: 8px;
+    height: 3px;
+    border-radius: 1px;
+  }
+
+  @media (max-width: 600px) {
+    .charts { grid-template-columns: 1fr; }
+  }
+
   /* rules */
   .rules {
     margin-top: 2rem;
@@ -351,6 +405,19 @@
     </div>
   </div>
 
+  <div class="charts" id="charts" style="display:none">
+    <div class="chart-box">
+      <h3>Order Fill Progress</h3>
+      <canvas id="fillChart"></canvas>
+      <div class="chart-legend" id="fillLegend"></div>
+    </div>
+    <div class="chart-box">
+      <h3>Average Fill Price</h3>
+      <canvas id="priceChart"></canvas>
+      <div class="chart-legend" id="priceLegend"></div>
+    </div>
+  </div>
+
   <div class="rules">
     <h2>How It Works</h2>
     <p>You have <span class="hl">10,000 units</span> to buy over <span class="hl">500 ticks</span>. A synthetic market provides liquidity through an order book. Every time you buy, you push the price up. Other players' agents are buying simultaneously, competing for the same liquidity.</p>
@@ -446,6 +513,109 @@ function render(data) {
   board.classList.remove('flash');
   void board.offsetWidth;
   board.classList.add('flash');
+
+  renderCharts(standings);
+}
+
+const COLORS = ['#FFB000', '#00E676', '#448AFF', '#FF5252', '#E040FB', '#00BCD4', '#FF9100', '#76FF03'];
+
+function drawChart(canvasId, legendId, standings, getValues, yLabel, formatY) {
+  const canvas = document.getElementById(canvasId);
+  const legend = document.getElementById(legendId);
+  const ctx = canvas.getContext('2d');
+  const dpr = window.devicePixelRatio || 1;
+  const rect = canvas.getBoundingClientRect();
+  canvas.width = rect.width * dpr;
+  canvas.height = rect.height * dpr;
+  ctx.scale(dpr, dpr);
+  const W = rect.width;
+  const H = rect.height;
+  const pad = { top: 10, right: 10, bottom: 20, left: 45 };
+
+  // Collect all values for y-axis range
+  let allVals = [];
+  for (const s of standings) {
+    const vals = getValues(s);
+    if (vals && vals.length) allVals.push(...vals);
+  }
+  if (!allVals.length) return;
+
+  const yMin = Math.min(...allVals);
+  const yMax = Math.max(...allVals);
+  const yRange = yMax - yMin || 1;
+
+  const plotW = W - pad.left - pad.right;
+  const plotH = H - pad.top - pad.bottom;
+
+  // Grid lines
+  ctx.strokeStyle = '#1e1e1e';
+  ctx.lineWidth = 1;
+  for (let i = 0; i <= 4; i++) {
+    const y = pad.top + (plotH / 4) * i;
+    ctx.beginPath();
+    ctx.moveTo(pad.left, y);
+    ctx.lineTo(W - pad.right, y);
+    ctx.stroke();
+  }
+
+  // Y-axis labels
+  ctx.fillStyle = '#5a5a5a';
+  ctx.font = '10px JetBrains Mono';
+  ctx.textAlign = 'right';
+  for (let i = 0; i <= 4; i++) {
+    const val = yMax - (yRange / 4) * i;
+    const y = pad.top + (plotH / 4) * i;
+    ctx.fillText(formatY(val), pad.left - 5, y + 3);
+  }
+
+  // X-axis labels
+  ctx.textAlign = 'center';
+  ctx.fillText('0', pad.left, H - 3);
+  ctx.fillText('500', W - pad.right, H - 3);
+
+  // Draw lines
+  legend.innerHTML = '';
+  standings.forEach((s, idx) => {
+    const vals = getValues(s);
+    if (!vals || !vals.length) return;
+    const color = COLORS[idx % COLORS.length];
+    const n = vals.length;
+
+    ctx.strokeStyle = color;
+    ctx.lineWidth = 1.5;
+    ctx.beginPath();
+    for (let i = 0; i < n; i++) {
+      const x = pad.left + (i / (n - 1)) * plotW;
+      const y = pad.top + (1 - (vals[i] - yMin) / yRange) * plotH;
+      if (i === 0) ctx.moveTo(x, y);
+      else ctx.lineTo(x, y);
+    }
+    ctx.stroke();
+
+    legend.innerHTML += `<div class="legend-item"><div class="legend-dot" style="background:${color}"></div>${s.name}</div>`;
+  });
+}
+
+function renderCharts(standings) {
+  const chartsEl = document.getElementById('charts');
+  const hasData = standings.some(s => s.fill_curve && s.fill_curve.length > 0);
+  if (!hasData) {
+    chartsEl.style.display = 'none';
+    return;
+  }
+  chartsEl.style.display = 'grid';
+
+  drawChart('fillChart', 'fillLegend', standings,
+    s => s.fill_curve,
+    'Fill %',
+    v => (v * 100).toFixed(0) + '%'
+  );
+
+  drawChart('priceChart', 'priceLegend', standings,
+    s => s.price_curve,
+    'Price',
+    v => '$' + v.toFixed(2)
+  );
 }
 
 fetchLeaderboard();
