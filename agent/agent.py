@@ -1,6 +1,5 @@
 """Your agent! Modify this file to build your execution strategy.
 
-Run `python cli.py test` to test locally against example bots.
 Run `python cli.py submit` to submit to the competition server.
 """
 

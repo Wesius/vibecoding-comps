@@ -484,7 +484,6 @@
       <li>Install dependencies: <code>uv sync</code> &nbsp;(don't have uv? <code>curl -LsSf https://astral.sh/uv/install.sh | sh</code>)</li>
       <li>Drop your credentials <code>.txt</code> file in the repo root and rename it to <code>.env</code></li>
       <li>Edit <code>agent/agent.py</code> &mdash; this is your bot. It comes pre-filled with a basic strategy.</li>
-      <li>Test locally: <code>uv run python cli.py test</code> &mdash; runs your bot against example bots on your machine</li>
       <li>Submit: <code>uv run python cli.py submit</code> &mdash; uploads your bot and runs a tournament immediately</li>
     </ol>
     <p>You can submit as many times as you want. Each submit overwrites your previous bot and runs a fresh tournament. Tournaments also auto-run every 60 seconds. Iterate fast.</p>

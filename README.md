@@ -45,10 +45,7 @@ def on_tick(self, state: TickState) -> list[Order]:
 ## Commands
 
 ```bash
-# Test locally against example bots
-uv run python cli.py test
-
-# Submit your agent (tournaments auto-run every 15s)
+# Submit your agent
 uv run python cli.py submit
 
 # Check the leaderboard
