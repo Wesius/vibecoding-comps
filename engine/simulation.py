@@ -41,20 +41,22 @@ def _ensure_unique_agent_ids(agent_ids: Sequence[str]) -> None:
 
 def _validate_agent_actions(
     actions: Sequence[Order | CancelOrder],
-    remaining_qty: int,
+    buy_budget: int,
+    sell_budget: int,
     resting_orders: tuple[RestingOrderInfo, ...],
 ) -> tuple[list[int], list[Order]]:
     """Validate agent actions.
 
     - CancelOrder may only target the agent's current resting orders
-    - All new orders must be BUY side
-    - Total new size clipped to remaining_qty
+    - BUY orders clipped to buy_budget
+    - SELL orders clipped to sell_budget (no shorting)
     - Invalid actions are dropped
     """
     resting_order_ids = {order.order_id for order in resting_orders}
     cancel_ids: list[int] = []
     validated: list[Order] = []
-    budget = remaining_qty
+    buy_remaining = buy_budget
+    sell_remaining = sell_budget
 
     for action in actions:
         if isinstance(action, CancelOrder):
@@ -69,15 +71,21 @@ def _validate_agent_actions(
             continue
 
         order = action
-        if order.side != Side.BUY:
-            continue
         if order.size <= 0:
             continue
-        size = min(order.size, budget)
-        if size <= 0:
-            break
-        validated.append(dataclasses.replace(order, size=size))
-        budget -= size
+
+        if order.side == Side.BUY:
+            size = min(order.size, buy_remaining)
+            if size <= 0:
+                continue
+            validated.append(dataclasses.replace(order, size=size))
+            buy_remaining -= size
+        elif order.side == Side.SELL:
+            size = min(order.size, sell_remaining)
+            if size <= 0:
+                continue
+            validated.append(dataclasses.replace(order, size=size))
+            sell_remaining -= size
 
     return cancel_ids, validated
 
@@ -105,12 +113,14 @@ def _cap_noise_sells(
     return result, budget
 
 
-def _compute_avg_price(fills: list[Fill]) -> float:
+def _compute_net_avg_price(fills: list[Fill], target_qty: int) -> float:
+    """Net effective price = (buy_cost - sell_proceeds) / target_qty."""
     if not fills:
         return 0.0
-    total_cost = sum(f.price * f.size for f in fills)
-    total_size = sum(f.size for f in fills)
-    return total_cost / total_size if total_size > 0 else 0.0
+    buy_cost = sum(f.price * f.size for f in fills if f.side == Side.BUY)
+    sell_proceeds = sum(f.price * f.size for f in fills if f.side == Side.SELL)
+    net_cost = buy_cost - sell_proceeds
+    return net_cost / target_qty if target_qty > 0 else 0.0
 
 
 class Simulation:
@@ -277,14 +287,13 @@ class Simulation:
             tick_agent_flow = 0
 
             for agent in agent_sequence:
-                total_filled = sum(
-                    f.size for f in agent_fills[agent.agent_id]
-                )
-                true_remaining = cfg.target_qty - total_filled
-                resting_orders = book.get_resting_orders(agent.agent_id)
-                resting_qty = sum(
-                    order.remaining_size for order in resting_orders
-                )
+                aid = agent.agent_id
+                af = agent_fills[aid]
+                buy_filled = sum(f.size for f in af if f.side == Side.BUY)
+                sell_filled = sum(f.size for f in af if f.side == Side.SELL)
+                net_position = buy_filled - sell_filled
+                true_remaining = cfg.target_qty - net_position
+                resting_orders = book.get_resting_orders(aid)
                 snapshot = book.snapshot()
                 tape_window_entries = [
                     entry for entry in tape if entry.tick >= tick - cfg.tape_window
@@ -294,9 +303,10 @@ class Simulation:
                     total_ticks=cfg.n_ticks,
                     order_book=snapshot,
                     remaining_qty=max(0, true_remaining),
-                    fills=tuple(agent_fills[agent.agent_id]),
-                    avg_fill_price=_compute_avg_price(
-                        agent_fills[agent.agent_id]
+                    net_position=net_position,
+                    fills=tuple(af),
+                    avg_fill_price=_compute_net_avg_price(
+                        af, cfg.target_qty
                     ),
                     trade_tape=tuple(tape_window_entries),
                     arrival_price=arrival_price,
@@ -318,42 +328,62 @@ class Simulation:
                     for action in actions
                     if isinstance(action, CancelOrder)
                 ]
-                cancelled_resting_qty = sum(
-                    order.remaining_size
-                    for order in resting_orders
-                    if order.order_id in cancel_ids
+                resting_buy_qty = sum(
+                    o.remaining_size for o in resting_orders
+                    if o.side == Side.BUY
                 )
-                order_budget = max(
+                resting_sell_qty = sum(
+                    o.remaining_size for o in resting_orders
+                    if o.side == Side.SELL
+                )
+                cancelled_buy_qty = sum(
+                    o.remaining_size for o in resting_orders
+                    if o.order_id in cancel_ids and o.side == Side.BUY
+                )
+                cancelled_sell_qty = sum(
+                    o.remaining_size for o in resting_orders
+                    if o.order_id in cancel_ids and o.side == Side.SELL
+                )
+                buy_budget = max(
                     0,
-                    true_remaining - (resting_qty - cancelled_resting_qty),
+                    true_remaining - (resting_buy_qty - cancelled_buy_qty),
+                )
+                sell_budget = max(
+                    0,
+                    net_position - (resting_sell_qty - cancelled_sell_qty),
                 )
 
                 validated_cancels, validated = _validate_agent_actions(
                     actions,
-                    order_budget,
+                    buy_budget,
+                    sell_budget,
                     resting_orders,
                 )
-                submitted_orders[agent.agent_id] = len(validated)
-                submitted_market_orders[agent.agent_id] = sum(
+                submitted_orders[aid] = len(validated)
+                submitted_market_orders[aid] = sum(
                     1 for order in validated if order.order_type == OrderType.MARKET
                 )
 
                 for order_id in validated_cancels:
-                    book.cancel_order(agent.agent_id, order_id)
+                    book.cancel_order(aid, order_id)
 
                 aggressor_fills, tick_tape, resting_fills = (
                     matching.execute_agent_orders(
                         book,
-                        agent.agent_id,
+                        aid,
                         validated,
                         tick,
                         cfg.agent_order_ttl_ticks,
                     )
                 )
                 if aggressor_fills:
-                    agent_fills[agent.agent_id].extend(aggressor_fills)
-                    fills_this_tick[agent.agent_id].extend(aggressor_fills)
-                    tick_agent_flow += sum(fill.size for fill in aggressor_fills)
+                    agent_fills[aid].extend(aggressor_fills)
+                    fills_this_tick[aid].extend(aggressor_fills)
+                    for fill in aggressor_fills:
+                        if fill.side == Side.BUY:
+                            tick_agent_flow += fill.size
+                        else:
+                            tick_agent_flow -= fill.size
                 tape.extend(tick_tape)
                 _record_resting_fills(resting_fills, fills_this_tick)
 
@@ -387,17 +417,25 @@ class Simulation:
                     af = agent_fills[aid]
                     n_orders = submitted_orders.get(aid, 0)
                     n_market = submitted_market_orders.get(aid, 0)
-                    tick_fill_qty = sum(
-                        fill.size for fill in fills_this_tick.get(aid, [])
+                    tick_fills = fills_this_tick.get(aid, [])
+                    tick_buy_qty = sum(
+                        f.size for f in tick_fills if f.side == Side.BUY
                     )
-                    cum_qty = sum(f.size for f in af)
+                    tick_sell_qty = sum(
+                        f.size for f in tick_fills if f.side == Side.SELL
+                    )
+                    cum_buy = sum(f.size for f in af if f.side == Side.BUY)
+                    cum_sell = sum(f.size for f in af if f.side == Side.SELL)
+                    net_pos = cum_buy - cum_sell
                     replay_agents[aid] = {
                         "orders": n_orders,
                         "market_orders": n_market,
                         "limit_orders": n_orders - n_market,
-                        "filled_this_tick": tick_fill_qty,
-                        "cumulative_filled": cum_qty,
-                        "pct_filled": round(cum_qty / cfg.target_qty, 4),
+                        "filled_this_tick": tick_buy_qty + tick_sell_qty,
+                        "bought_this_tick": tick_buy_qty,
+                        "sold_this_tick": tick_sell_qty,
+                        "cumulative_filled": net_pos,
+                        "pct_filled": round(net_pos / cfg.target_qty, 4),
                     }
                 # Top 5 bid/ask levels for book visualization
                 snap = book.snapshot()
@@ -413,18 +451,27 @@ class Simulation:
             for agent in self._agents:
                 aid = agent.agent_id
                 fills = agent_fills[aid]
-                total = sum(f.size for f in fills)
-                tick_cumulative_pct[aid].append(total / cfg.target_qty)
+                net_pos = (
+                    sum(f.size for f in fills if f.side == Side.BUY)
+                    - sum(f.size for f in fills if f.side == Side.SELL)
+                )
+                tick_cumulative_pct[aid].append(net_pos / cfg.target_qty)
                 tick_avg_price[aid].append(
-                    _compute_avg_price(fills) if fills else arrival_price
+                    _compute_net_avg_price(fills, cfg.target_qty)
+                    if fills else arrival_price
                 )
 
         # Terminal sweep: market-order any unfilled quantity against the book
         final_tick = cfg.n_ticks
         for agent in self._agents:
             aid = agent.agent_id
-            total_filled = sum(f.size for f in agent_fills[aid])
-            unfilled = cfg.target_qty - total_filled
+            buy_filled = sum(
+                f.size for f in agent_fills[aid] if f.side == Side.BUY
+            )
+            sell_filled = sum(
+                f.size for f in agent_fills[aid] if f.side == Side.SELL
+            )
+            unfilled = cfg.target_qty - (buy_filled - sell_filled)
             if unfilled <= 0:
                 continue
 
@@ -454,8 +501,11 @@ class Simulation:
         results: list[AgentResult] = []
         for agent in self._agents:
             fills = agent_fills[agent.agent_id]
-            total_filled = sum(f.size for f in fills)
-            avg_price = _compute_avg_price(fills)
+            net_pos = (
+                sum(f.size for f in fills if f.side == Side.BUY)
+                - sum(f.size for f in fills if f.side == Side.SELL)
+            )
+            avg_price = _compute_net_avg_price(fills, cfg.target_qty)
             is_bps = implementation_shortfall(
                 fills, arrival_price, cfg.target_qty
             )
@@ -463,11 +513,11 @@ class Simulation:
                 agent_id=agent.agent_id,
                 agent_class=type(agent).__name__,
                 fills=fills,
-                total_filled=total_filled,
+                total_filled=net_pos,
                 avg_price=avg_price,
                 arrival_price=arrival_price,
                 implementation_shortfall=is_bps,
-                remaining_qty=cfg.target_qty - total_filled,
+                remaining_qty=cfg.target_qty - net_pos,
                 cumulative_fill_pct=tick_cumulative_pct[agent.agent_id],
                 running_avg_price=tick_avg_price[agent.agent_id],
             ))

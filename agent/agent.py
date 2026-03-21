@@ -24,16 +24,18 @@ class Agent(BaseAgent):
         state contains:
             - tick / total_ticks: current progress
             - order_book: full book with bids/asks and depth
-            - remaining_qty: how much you still need to buy
-            - fills: your fills so far
-            - avg_fill_price: your running average fill price
+            - remaining_qty: how much more you need to buy (net)
+            - net_position: shares you currently hold (can sell up to this)
+            - fills: your fills so far (both buys and sells)
+            - avg_fill_price: net cost / target_qty
             - trade_tape: recent trades (price, size, aggressor side)
             - arrival_price: mid price at tick 0 (your benchmark)
 
         Return:
-            List of Order objects. All must be BUY side.
-            Market order: Order(side=Side.BUY, size=N, order_type=OrderType.MARKET)
-            Limit order:  Order(side=Side.BUY, size=N, order_type=OrderType.LIMIT, price=P)
+            List of Order objects. Can be BUY or SELL side.
+            Market buy:  Order(side=Side.BUY, size=N, order_type=OrderType.MARKET)
+            Limit buy:   Order(side=Side.BUY, size=N, order_type=OrderType.LIMIT, price=P)
+            Market sell:  Order(side=Side.SELL, size=N, order_type=OrderType.MARKET)
         """
         if state.remaining_qty <= 0:
             return []

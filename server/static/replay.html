@@ -292,11 +292,14 @@ function drawAgents(frame) {
     const color = COLORS[i % COLORS.length];
     const pct = (a.pct_filled * 100).toFixed(1);
     const mkt = a.market_orders, lmt = a.limit_orders;
+    const bought = a.bought_this_tick || a.filled_this_tick || 0;
+    const sold = a.sold_this_tick || 0;
+    const fillStr = sold > 0 ? `+${bought}/-${sold}` : `+${bought}`;
     html += `<div class="agent-row">
       <span class="agent-name" style="color:${color}">${name}</span>
-      <span class="agent-stat">${pct}% &middot; +${a.filled_this_tick} &middot; ${mkt}M/${lmt}L</span>
+      <span class="agent-stat">${pct}% &middot; ${fillStr} &middot; ${mkt}M/${lmt}L</span>
     </div>
-    <div class="agent-bar" style="width:${pct}%;background:${color}"></div>`;
+    <div class="agent-bar" style="width:${Math.max(0, pct)}%;background:${color}"></div>`;
   });
   el.innerHTML = html;
 }

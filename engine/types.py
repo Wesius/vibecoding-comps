@@ -101,6 +101,7 @@ class TickState:
     total_ticks: int
     order_book: OrderBookSnapshot
     remaining_qty: int
+    net_position: int
     fills: tuple[Fill, ...]
     avg_fill_price: float
     trade_tape: tuple[TradeTapeEntry, ...]

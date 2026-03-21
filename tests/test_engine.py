@@ -482,12 +482,16 @@ class TestScoring:
     def test_no_fills(self):
         assert implementation_shortfall([], 100.0, 100) == float("inf")
 
-    def test_partial_fill_same_avg(self):
-        """Scoring only considers actual fills; terminal sweep is handled by the simulation."""
+    def test_partial_fill_scales_with_target(self):
+        """IS uses net_cost / target_qty, so partial fills scale with target size."""
         fills = [Fill(price=101.0, size=50, tick=0, side=Side.BUY)]
         is_full = implementation_shortfall(fills, 100.0, 50)
-        is_partial = implementation_shortfall(fills, 100.0, 100)
-        assert is_partial == is_full  # same avg price, no in-scorer penalty
+        is_half = implementation_shortfall(fills, 100.0, 100)
+        # Same fill cost (5050) but spread over double the target
+        # is_full: 5050/50=101, IS=100bps
+        # is_half: 5050/100=50.5, IS=-4950bps (terminal sweep handles rest)
+        assert is_full == pytest.approx(100.0)
+        assert is_half < is_full
 
     def test_negative_shortfall(self):
         # Price moved in our favor
@@ -683,4 +687,241 @@ class TestSimulation:
         ).run()
 
         assert observer.seen_best_ask == pytest.approx(101.0)
+
+
+# --- Sell-related test agents ---
+
+
+class BuyThenSellAgent(BaseAgent):
+    """Buys all on tick 0, sells half on tick 1, re-buys on tick 2."""
+
+    def on_tick(self, state):
+        if state.tick == 0:
+            return [Order(side=Side.BUY, size=state.remaining_qty, order_type=OrderType.MARKET)]
+        if state.tick == 1 and state.net_position > 0:
+            return [Order(side=Side.SELL, size=state.net_position // 2, order_type=OrderType.MARKET)]
+        if state.tick == 2 and state.remaining_qty > 0:
+            return [Order(side=Side.BUY, size=state.remaining_qty, order_type=OrderType.MARKET)]
+        return []
+
+
+class SellEverythingAgent(BaseAgent):
+    """Buys on tick 0, sells everything on tick 1."""
+
+    def on_tick(self, state):
+        if state.tick == 0:
+            return [Order(side=Side.BUY, size=state.remaining_qty, order_type=OrderType.MARKET)]
+        if state.tick == 1 and state.net_position > 0:
+            return [Order(side=Side.SELL, size=state.net_position, order_type=OrderType.MARKET)]
+        return []
+
+
+class ShortAttemptAgent(BaseAgent):
+    """Tries to sell without any position -- should be blocked."""
+
+    def on_tick(self, state):
+        if state.tick == 0:
+            return [Order(side=Side.SELL, size=100, order_type=OrderType.MARKET)]
+        return []
+
+
+class SellObserverAgent(BaseAgent):
+    """Buys on tick 0, records net_position and remaining_qty on tick 1."""
+
+    def __init__(self, agent_id, target_qty, **kwargs):
+        super().__init__(agent_id, target_qty, **kwargs)
+        self.observed_net_position = None
+        self.observed_remaining_qty = None
+
+    def on_tick(self, state):
+        if state.tick == 0:
+            return [Order(side=Side.BUY, size=state.remaining_qty, order_type=OrderType.MARKET)]
+        if state.tick == 1:
+            self.observed_net_position = state.net_position
+            self.observed_remaining_qty = state.remaining_qty
+            if state.net_position > 0:
+                return [Order(side=Side.SELL, size=state.net_position // 2, order_type=OrderType.MARKET)]
+        if state.tick == 2:
+            self.observed_net_position = state.net_position
+            self.observed_remaining_qty = state.remaining_qty
+        return []
+
+
+# Market maker that provides bids too (so sells can match)
+class TwoSidedMarketMaker:
+    def __init__(self, **kwargs):
+        self._current_spread = 0.2
+
+    @property
+    def current_spread(self):
+        return self._current_spread
+
+    def observe_passive_fills(self, fills):
+        pass
+
+    def generate_quotes(self, mid_price, net_agent_flow, recent_volatility):
+        return [
+            Order(side=Side.BUY, size=200, order_type=OrderType.LIMIT, price=99.9, agent_id="mm"),
+            Order(side=Side.SELL, size=200, order_type=OrderType.LIMIT, price=100.1, agent_id="mm"),
+        ]
+
+
+class TestSelling:
+    def test_sell_orders_accepted(self, monkeypatch):
+        """Agent buys then sells; verify SELL fills are recorded."""
+        config = SimulationConfig(n_ticks=3, target_qty=5, noise_avg_orders=0)
+
+        monkeypatch.setattr("engine.simulation.MidPriceProcess", FakePriceModel)
+        monkeypatch.setattr("engine.simulation.MarketMaker", TwoSidedMarketMaker)
+        monkeypatch.setattr("engine.simulation.NoiseTrader", SilentNoiseTrader)
+
+        result = Simulation(
+            agents=[BuyThenSellAgent("trader", 5)],
+            config=config,
+            seed=123,
+        ).run()[0][0]
+
+        sell_fills = [f for f in result.fills if f.side == Side.SELL]
+        assert len(sell_fills) > 0
+        assert result.total_filled == 5
+        assert result.remaining_qty == 0
+
+    def test_no_shorting_enforced(self, monkeypatch):
+        """Sell with 0 position produces no sell fills."""
+        config = SimulationConfig(n_ticks=2, target_qty=5, noise_avg_orders=0)
+
+        monkeypatch.setattr("engine.simulation.MidPriceProcess", FakePriceModel)
+        monkeypatch.setattr("engine.simulation.MarketMaker", TwoSidedMarketMaker)
+        monkeypatch.setattr("engine.simulation.NoiseTrader", SilentNoiseTrader)
+
+        result = Simulation(
+            agents=[ShortAttemptAgent("shorter", 5)],
+            config=config,
+            seed=123,
+        ).run()[0][0]
+
+        sell_fills = [f for f in result.fills if f.side == Side.SELL]
+        assert len(sell_fills) == 0
+        # Terminal sweep fills the target
+        assert result.total_filled == 5
+
+    def test_sell_increases_remaining_qty(self, monkeypatch):
+        """After selling, remaining_qty goes up and net_position goes down."""
+        config = SimulationConfig(n_ticks=3, target_qty=5, noise_avg_orders=0)
+        agent = SellObserverAgent("obs", 5)
+
+        monkeypatch.setattr("engine.simulation.MidPriceProcess", FakePriceModel)
+        monkeypatch.setattr("engine.simulation.MarketMaker", TwoSidedMarketMaker)
+        monkeypatch.setattr("engine.simulation.NoiseTrader", SilentNoiseTrader)
+
+        Simulation(agents=[agent], config=config, seed=123).run()
+
+        # On tick 1 after buying 5 on tick 0: net_position=5, remaining=0
+        # Agent sells half (2) on tick 1
+        # On tick 2: net_position=3, remaining=2
+        assert agent.observed_net_position == 3
+        assert agent.observed_remaining_qty == 2
+
+    def test_sell_everything_terminal_sweep(self, monkeypatch):
+        """Sell all position; terminal sweep must re-buy everything."""
+        config = SimulationConfig(n_ticks=3, target_qty=5, noise_avg_orders=0)
+
+        monkeypatch.setattr("engine.simulation.MidPriceProcess", FakePriceModel)
+        monkeypatch.setattr("engine.simulation.MarketMaker", TwoSidedMarketMaker)
+        monkeypatch.setattr("engine.simulation.NoiseTrader", SilentNoiseTrader)
+
+        result = Simulation(
+            agents=[SellEverythingAgent("seller", 5)],
+            config=config,
+            seed=123,
+        ).run()[0][0]
+
+        # Terminal sweep should fill remaining
+        assert result.total_filled == 5
+        assert result.remaining_qty == 0
+
+    def test_sell_flow_is_negative(self, monkeypatch):
+        """Agent sell flow should be negative in price model."""
+        FakePriceModel.seen_flows = []
+        config = SimulationConfig(n_ticks=3, target_qty=5, noise_avg_orders=0)
+
+        monkeypatch.setattr("engine.simulation.MidPriceProcess", FakePriceModel)
+        monkeypatch.setattr("engine.simulation.MarketMaker", TwoSidedMarketMaker)
+        monkeypatch.setattr("engine.simulation.NoiseTrader", SilentNoiseTrader)
+
+        Simulation(
+            agents=[BuyThenSellAgent("trader", 5)],
+            config=config,
+            seed=123,
+        ).run()
+
+        # tick 0: buy flow (positive), tick 1: sell flow (negative), tick 2: buy flow
+        assert FakePriceModel.seen_flows[0] == 0  # first tick sees 0 (prev tick)
+        assert FakePriceModel.seen_flows[1] > 0  # lagged buy flow from tick 0
+        assert FakePriceModel.seen_flows[2] < 0  # lagged sell flow from tick 1
+
+    def test_net_position_in_tick_state(self, monkeypatch):
+        """Verify net_position field is correct after buys."""
+        config = SimulationConfig(n_ticks=2, target_qty=5, noise_avg_orders=0)
+        agent = SellObserverAgent("obs", 5)
+
+        monkeypatch.setattr("engine.simulation.MidPriceProcess", FakePriceModel)
+        monkeypatch.setattr("engine.simulation.MarketMaker", TwoSidedMarketMaker)
+        monkeypatch.setattr("engine.simulation.NoiseTrader", SilentNoiseTrader)
+
+        Simulation(agents=[agent], config=config, seed=123).run()
+
+        # After buying 5 on tick 0, tick 1 should see net_position=5
+        # Agent sells 2 on tick 1 (net_position // 2 = 2)
+        # But observed values are from tick 2
+        # Wait: with n_ticks=2, tick 1 is the last tick. Let's just check tick 1.
+        assert agent.observed_net_position is not None
+        assert agent.observed_net_position == 5
+
+    def test_replay_tracks_sell_activity(self, monkeypatch):
+        """Replay data includes bought/sold_this_tick fields."""
+        config = SimulationConfig(n_ticks=3, target_qty=5, noise_avg_orders=0)
+
+        monkeypatch.setattr("engine.simulation.MidPriceProcess", FakePriceModel)
+        monkeypatch.setattr("engine.simulation.MarketMaker", TwoSidedMarketMaker)
+        monkeypatch.setattr("engine.simulation.NoiseTrader", SilentNoiseTrader)
+
+        _results, _mids, _spreads, replay_ticks = Simulation(
+            agents=[BuyThenSellAgent("trader", 5)],
+            config=config,
+            seed=123,
+        ).run()
+
+        # Tick 1 should show sell activity
+        tick1_agent = replay_ticks[1]["agents"]["trader"]
+        assert tick1_agent["sold_this_tick"] > 0
+        assert tick1_agent["bought_this_tick"] == 0
+
+
+class TestScoringWithSells:
+    def test_sells_reduce_is(self):
+        """Selling high reduces net cost and improves IS."""
+        buy_fills = [Fill(price=101.0, size=100, tick=0, side=Side.BUY)]
+        is_buy_only = implementation_shortfall(buy_fills, 100.0, 100)
+
+        # Round trip: buy 100 @ 101, sell 50 @ 102, rebuy 50 @ 100.5
+        all_fills = [
+            Fill(price=101.0, size=100, tick=0, side=Side.BUY),
+            Fill(price=102.0, size=50, tick=1, side=Side.SELL),
+            Fill(price=100.5, size=50, tick=2, side=Side.BUY),
+        ]
+        # net_cost = 101*100 - 102*50 + 100.5*50 = 10100 - 5100 + 5025 = 10025
+        # avg_effective = 10025 / 100 = 100.25
+        # IS = (100.25 - 100) / 100 * 10000 = 25 bps
+        is_with_sells = implementation_shortfall(all_fills, 100.0, 100)
+        assert abs(is_with_sells - 25.0) < 0.01
+        assert is_with_sells < is_buy_only
+
+    def test_sell_only_fills_handled(self):
+        """Scoring handles case where there are only sell fills."""
+        fills = [Fill(price=102.0, size=50, tick=0, side=Side.SELL)]
+        # net_cost = -5100, avg = -5100/100 = -51
+        # IS = (-51 - 100) / 100 * 10000 = -15100 bps (very negative)
+        is_bps = implementation_shortfall(fills, 100.0, 100)
+        assert is_bps < 0
 

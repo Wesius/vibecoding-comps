@@ -22,10 +22,12 @@ class BaseAgent(ABC):
         """Called once per tick. Return a list of actions.
 
         Rules:
-        - All orders must be BUY side (you are filling a buy order)
+        - BUY orders: fill your buy mandate (target_qty shares)
+        - SELL orders: sell shares you already hold (no shorting).
+          You can sell up to state.net_position shares.
         - CancelOrder may target only your own live resting orders
-        - Total size across orders must not exceed state.remaining_qty
-          (engine will clip if you exceed)
+        - Buy size clipped to remaining buy budget; sell size clipped
+          to available sell budget (engine enforces no-short)
         - Empty list is valid (skip this tick)
         """
         ...

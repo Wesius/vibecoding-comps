@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from engine.types import Fill
+from engine.types import Fill, Side
 
 
 def implementation_shortfall(
@@ -23,9 +23,10 @@ def implementation_shortfall(
     if not fills:
         return float("inf")
 
-    total_filled = sum(f.size for f in fills)
-    total_cost = sum(f.price * f.size for f in fills)
+    buy_cost = sum(f.price * f.size for f in fills if f.side == Side.BUY)
+    sell_proceeds = sum(f.price * f.size for f in fills if f.side == Side.SELL)
+    net_cost = buy_cost - sell_proceeds
 
-    avg_price = total_cost / total_filled
+    avg_price = net_cost / target_qty
     is_bps = (avg_price - arrival_price) / arrival_price * 10_000
     return is_bps
