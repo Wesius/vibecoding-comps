@@ -440,11 +440,12 @@
   <div class="rules">
     <h2>What Is This?</h2>
     <p>You write a Python bot that buys stuff on a simulated stock market. Your bot needs to buy <span class="hl">10,000 units</span> over <span class="hl">500 time steps</span>. The catch: every time you buy, you push the price up. And everyone else's bots are buying at the same time, fighting over the same limited supply.</p>
+    <p>You can also <span class="hl">sell</span> shares you've already bought. Selling high and buying back lower reduces your net cost &mdash; but you can't sell more than you hold (no shorting).</p>
     <p>The dumb approach &mdash; buying everything at once &mdash; gets crushed because you eat through all the cheap offers and end up paying way more. The game is figuring out <span class="hl">when</span> to buy, <span class="hl">how much</span> to buy, and <span class="hl">what price</span> to offer.</p>
 
     <h2>How Scoring Works</h2>
     <p>The starting price is <span class="hl">$100</span>. Your score is how much more (or less) you paid on average compared to that starting price.</p>
-    <p>A score of <span class="hl">50 bps</span> means your average buy price was <span class="hl">$100.50</span> &mdash; you overpaid by $0.50 per unit, or $5,000 total. A score of <span class="green">-10 bps</span> means you averaged <span class="green">$99.90</span> &mdash; you actually beat the starting price. <span class="green">Lower is better. Negative is amazing.</span></p>
+    <p>A score of <span class="hl">50 bps</span> means your net cost per unit was <span class="hl">$100.50</span> &mdash; you overpaid by $0.50 per unit, or $5,000 total. A score of <span class="green">-10 bps</span> means you averaged <span class="green">$99.90</span> &mdash; you actually beat the starting price. Profitable round-trips (sell high, buy back low) reduce your net cost. <span class="green">Lower is better. Negative is amazing.</span></p>
     <p>Each tournament runs your bot 50 times with different random market conditions and averages the results, so you can't just get lucky once.</p>
 
     <h2>The Market</h2>
@@ -462,11 +463,11 @@
     <div class="rules-columns">
       <div>
         <h3>Market Orders</h3>
-        <p>Buy immediately at whatever price is available. Guaranteed to fill, but you pay the current asking price. If you buy a lot at once, you "walk the book" &mdash; eating through cheap offers and paying more for each additional unit.</p>
+        <p>Buy or sell immediately at whatever price is available. Guaranteed to fill, but you pay the spread. If you buy a lot at once, you "walk the book" &mdash; eating through cheap offers and paying more for each additional unit.</p>
       </div>
       <div>
         <h3>Limit Orders</h3>
-        <p>Place an offer to buy at a specific price. Only fills if someone sells to you at that price. Cheaper when it works, but might not fill at all. Unfilled limit orders are cancelled at the end of each tick.</p>
+        <p>Place an offer to buy or sell at a specific price. Only fills if someone trades against you at that price. Cheaper when it works, but might not fill at all.</p>
       </div>
     </div>
 
@@ -475,6 +476,7 @@
     <p><span class="hl">Use limit orders</span> &mdash; instead of paying the asking price, post a buy order slightly below it. You get a better price when it fills, and you don't push the market up as much.</p>
     <p><span class="hl">Read the book</span> &mdash; if there's a lot of supply available at the current price, it's a good time to buy. If the book is thin, wait.</p>
     <p><span class="hl">Watch the spread</span> &mdash; the gap between the best buy and sell prices widens when the market detects aggressive buying. When the spread is wide, back off. When it tightens, buy.</p>
+    <p><span class="hl">Sell the rips</span> &mdash; if you've already bought shares and the price spikes, sell some and buy back cheaper later. Your score is based on net cost, so profitable round-trips help.</p>
     <p><span class="hl">Watch the tape</span> &mdash; you can see all recent trades. If another bot just slammed the market, prices are temporarily elevated. Wait for things to settle.</p>
     <p><span class="hl">Go full quant</span> &mdash; train a reinforcement learning model offline, load the weights in your bot, and run inference each tick. The sky is the limit.</p>
 
